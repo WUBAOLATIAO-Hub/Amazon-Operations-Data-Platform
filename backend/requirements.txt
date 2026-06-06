@@ -1,0 +1,8 @@
+fastapi==0.115.0
+uvicorn==0.30.0
+sqlalchemy==2.0.35
+pymysql==1.1.1
+cryptography==43.0.0
+openpyxl==3.1.5
+python-multipart==0.0.12
+pandas==2.2.2

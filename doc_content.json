@@ -1,0 +1,228 @@
+{
+  "title": "LMG 数据平台技术文档",
+  "subtitle": "版本: v2.0  |  日期: 2026-06-06  |  作者: LMG 开发团队",
+  "toc": [
+    "1. 项目概述",
+    "2. 技术栈与框架",
+    "3. 项目结构与文件路径",
+    "4. 数据源说明",
+    "5. 数据库设计",
+    "6. 利润算法定义",
+    "7. API 接口文档",
+    "8. 开发过程中遇到的问题与解决方案",
+    "9. 部署与访问"
+  ],
+  "sections": {
+    "1": {
+      "title": "1. 项目概述",
+      "content": "LMG 数据平台是为 LMG 亚马逊运营团队打造的数据分析系统，用于汇总美国站（US）、英国站（UK）、德国站（DE）的销售、广告、仓储、退货、入库等数据，自动计算每个产品的净利润和净利率，支持按月份/年份/产品进行多维度查询分析。",
+      "features": [
+        "数据看板（Dashboard）：总销量、销售额、净利润、环比变化、趋势图、产品分布",
+        "数据查询（Query）：按产品汇总的月度数据，支持 ASIN/产品名称搜索，支持排序和分页",
+        "广告分析（Advertising）：广告花费、ACOS、ROAS、CTR、CPC 等指标",
+        "数据导入（Import）：支持工作簿一键导入和单独 CSV/XLSX 导入"
+      ]
+    },
+    "2": {
+      "title": "2. 技术栈与框架",
+      "techs": [
+        ["后端框架", "Python 3.14 + FastAPI", "高性能异步 Web 框架，自动生成 OpenAPI 文档"],
+        ["ORM", "SQLAlchemy", "数据库对象关系映射，支持 MySQL/PostgreSQL"],
+        ["数据库", "MySQL 8.0 (utf8mb4)", "关系型数据库，存储所有业务数据"],
+        ["数据库驱动", "PyMySQL", "纯 Python 实现的 MySQL 客户端"],
+        ["前端框架", "React 18 + Vite", "组件化 UI 开发，Vite 提供快速热重载"],
+        ["UI 组件库", "Ant Design 5", "企业级 UI 组件库（Table、Form、Chart 等）"],
+        ["HTTP 客户端", "Axios", "前端 API 请求库，支持拦截器和超时配置"],
+        ["图表", "@ant-design/charts", "基于 G2 的 React 图表组件"],
+        ["路由", "React Router v6", "前端单页应用路由管理"],
+        ["进程管理", "Uvicorn + --reload", "ASGI 服务器，支持热重载开发"]
+      ]
+    },
+    "3": {
+      "title": "3. 项目结构与文件路径",
+      "backend_files": [
+        ["E:/项目/lmg-platform/backend/main.py", "FastAPI 应用入口，注册所有路由，配置 CORS"],
+        ["E:/项目/lmg-platform/backend/config.py", "数据库连接配置（MySQL），上传目录配置"],
+        ["E:/项目/lmg-platform/backend/database.py", "SQLAlchemy 引擎和会话工厂，get_db 依赖注入"],
+        ["E:/项目/lmg-platform/backend/models.py", "所有数据模型定义（10 张表）"],
+        ["E:/项目/lmg-platform/backend/routers/query.py", "数据查询接口（/api/query/monthly-summary）"],
+        ["E:/项目/lmg-platform/backend/routers/dashboard.py", "看板接口（/api/dashboard/summary, trend, product-distribution）"],
+        ["E:/项目/lmg-platform/backend/routers/advertising.py", "广告分析接口（/api/advertising/summary, detail）"],
+        ["E:/项目/lmg-platform/backend/routers/import_data.py", "数据导入接口（交易/产品/广告/仓储/退货/入库/工作簿）"]
+      ],
+      "frontend_files": [
+        ["E:/项目/lmg-platform/frontend/vite.config.js", "Vite 构建配置，开发服务器代理（/api -> localhost:8000）"],
+        ["E:/项目/lmg-platform/frontend/src/main.jsx", "React 应用入口"],
+        ["E:/项目/lmg-platform/frontend/src/App.jsx", "路由配置（/dashboard, /query, /advertising, /import）"],
+        ["E:/项目/lmg-platform/frontend/src/api/index.js", "Axios 实例和所有 API 函数定义"],
+        ["E:/项目/lmg-platform/frontend/src/components/Layout.jsx", "全局布局组件（侧边栏导航 + 内容区）"],
+        ["E:/项目/lmg-platform/frontend/src/components/StatCard.jsx", "统计卡片组件（KPI 展示）"],
+        ["E:/项目/lmg-platform/frontend/src/pages/Dashboard.jsx", "数据看板页面"],
+        ["E:/项目/lmg-platform/frontend/src/pages/DataQuery.jsx", "数据查询页面（搜索、筛选、排序、分页）"],
+        ["E:/项目/lmg-platform/frontend/src/pages/Advertising.jsx", "广告分析页面"],
+        ["E:/项目/lmg-platform/frontend/src/pages/DataImport.jsx", "数据导入页面"]
+      ]
+    },
+    "4": {
+      "title": "4. 数据源说明",
+      "intro": "系统共使用 7 类数据源，原始数据存放在 C:\\Users\\yummy\\Desktop\\原始数据\\ 目录下：",
+      "sources": [
+        ["2026MayMonthlyTransaction.csv", "交易记录", "亚马逊结算报告：销售额、佣金(selling fees)、FBA费用(fba fees)、退款等。只记录有交易的 ASIN", "date/time"],
+        ["203254020606.csv", "仓储费", "FBA 月度仓储费，按 ASIN 汇总 estimated_monthly_storage_fee", "month_of_charge"],
+        ["203255020606.csv", "退货费", "退货处理费，按 ASIN 汇总 sku_returns_fee", "month_of_charge"],
+        ["203256020606.csv", "入库配置费", "FBA 入库配置服务费（亚马逊物流入库配置服务费用总计）", "交易日期"],
+        ["203257020606.csv", "长期仓储费", "超期库存附加费（surcharge-age-tier + amount-charged）", "snapshot-date"],
+        ["LMG 美国站产品信息表.xlsx", "产品信息", "所有产品的 ASIN、SKU、产品名、颜色、采购成本(¥)、运费/台(¥)", "-"],
+        ["Products_6月_4_2026.csv", "广告数据", "SP 广告报告：花费、销售额、ROAS、ACOS、点击、展示等", "报告周期"]
+      ],
+      "note": "产品信息表记录了美国站所有产品，而交易记录只包含有交易的 ASIN。仓储费、退货费、入库配置费、长期仓储费、广告费等，即使没有产生交易记录，也可能产生相应费用。这些数据通过 ASIN 和 SKU 字段关联，通过 month_of_charge、交易日期、snapshot-date 等字段确定归属月份。"
+    },
+    "5": {
+      "title": "5. 数据库设计",
+      "intro": "数据库名称: lmg_platform，字符集: utf8mb4，共 10 张表：",
+      "tables": [
+        ["dim_country", "国家维度表", "id, code(US/UK/DE), name, currency, exchange_rate"],
+        ["dim_product", "产品维度表", "id, asin(唯一), sku, product_name, color, cost_rmb, freight_per_unit, exchange_rate"],
+        ["dim_time", "时间维度表", "id, time_year, time_month, year_month(唯一)"],
+        ["raw_transactions", "原始交易记录", "id, country_id, transaction_date, transaction_type, order_id, sku, description, quantity, product_sales, selling_fee, fba_fee, total 等"],
+        ["raw_advertising", "原始广告数据", "id, country_id, asin, product_field, spend_usd, sales_usd, acos, roas, ctr, cpc, impressions, clicks, orders 等"],
+        ["raw_storage_fee", "原始仓储费", "id, country_id, asin, fnsku, estimated_monthly_storage_fee, month_of_charge 等"],
+        ["raw_returns", "原始退货费", "id, country_id, asin, sku_returns_fee, month_of_charge 等"],
+        ["raw_inbound", "原始入库费", "id, country_id, asin, inbound_placement_fee_total, transaction_date 等"],
+        ["raw_long_term_storage", "原始长期仓储费", "id, country_id, asin, amount_charged, snapshot_date, surcharge_age_tier 等"],
+        ["monthly_summary", "月度汇总表（核心）", "id, country_id, product_id, time_id, order_count, order_qty, product_sales_usd/rmb, commission_usd, fba_fee_usd, ad_spend_usd, storage_fee_usd, returns_fee_usd, inbound_fee_usd, product_cost_rmb, freight_cost_rmb, net_profit_rmb, net_profit_rate 等"]
+      ]
+    },
+    "6": {
+      "title": "6. 利润算法定义",
+      "formula": "净利润(¥) = 销售额(¥) + 佣金($)×汇率 + FBA费用($)×汇率 - 采购成本(¥) - 头程运费(¥) - 广告费($)×汇率 - 仓储费($)×汇率 - 退货费($)×汇率 - 入库配置费($)×汇率",
+      "formula_items": [
+        "销售额(¥) = product_sales_usd × exchange_rate",
+        "佣金($) = selling_fee（亚马逊记为负数，如 -212.48）",
+        "FBA费用($) = fba_fee（亚马逊记为负数，如 -223.50）",
+        "采购成本(¥) = cost_rmb × order_qty（下单数量，不扣退货）",
+        "头程运费(¥) = freight_per_unit × order_qty",
+        "广告费($) = ad_spend_usd（从广告报告导入，按月归属）",
+        "仓储费($) = storage_fee_usd（从仓储费报告导入，按 month_of_charge 归属）",
+        "退货费($) = returns_fee_usd（从退货费报告导入，按 month_of_charge 归属）",
+        "入库配置费($) = inbound_fee_usd（从入库费报告导入，按交易日期归属）",
+        "汇率 = exchange_rate（默认 6.8）"
+      ],
+      "net_sales": "净销量 = Order 数量 - |Refund| 数量。下单数量(order_qty) = 仅累加 Order 的数量（不扣退货），用于计算采购成本和运费。",
+      "no_order": "产品信息表记录了所有产品，但交易记录只包含有交易的 ASIN。对于没有订单的产品：采购成本 = 0（没有订单就没有采购）；头程运费 = 0；广告费/仓储费/退货费/入库费 = 实际产生的费用（这些费用与是否有订单无关）；净利润 = -(广告费 + 仓储费 + 退货费 + 入库费) × 汇率",
+      "query_logic": "查询接口从 DimProduct 表左连接 MonthlySummary 表，确保所有产品都会出现在查询结果中。对于没有 summary 记录的产品，所有数值字段显示为 0。搜索功能支持按 ASIN 或产品名称进行模糊匹配（MySQL LIKE，不区分大小写）。"
+    },
+    "7": {
+      "title": "7. API 接口文档",
+      "apis": [
+        ["GET", "/api/query/monthly-summary", "country, year, month, keyword, sort_by, sort_order, page, page_size", "按产品汇总的月度数据查询"],
+        ["GET", "/api/query/transactions", "country, date_from, date_to, sku, page, page_size", "原始交易明细查询（备用）"],
+        ["GET", "/api/dashboard/summary", "country, year, month", "看板汇总 KPI"],
+        ["GET", "/api/dashboard/trend", "country, year, month, group_by", "趋势数据"],
+        ["GET", "/api/dashboard/product-distribution", "country, year, month", "产品销售分布"],
+        ["GET", "/api/advertising/summary", "country, year_month", "广告汇总"],
+        ["GET", "/api/advertising/detail", "country, year_month, sort_by, sort_order, page, page_size", "广告明细"],
+        ["POST", "/api/import/workbook", "file, country", "一键导入合并工作簿"],
+        ["POST", "/api/import/transaction", "file, country", "导入交易记录 CSV"],
+        ["POST", "/api/import/product-info", "file", "导入产品信息 XLSX"],
+        ["POST", "/api/import/advertising", "file, country", "导入广告数据 CSV"],
+        ["POST", "/api/import/storage", "file, country", "导入仓储费 CSV"],
+        ["POST", "/api/import/returns", "file, country", "导入退货费 CSV"],
+        ["POST", "/api/import/inbound", "file, country", "导入入库费 CSV"],
+        ["POST", "/api/import/long-term-storage", "file, country", "导入长期仓储费 CSV"],
+        ["GET", "/api/import/supported", "-", "返回支持的导入类型列表"],
+        ["GET", "/health", "-", "健康检查"]
+      ]
+    },
+    "8": {
+      "title": "8. 开发过程中遇到的问题与解决方案",
+      "problems": [
+        {
+          "title": "问题 1：MySQL 不支持 ilike()",
+          "symptom": "搜索功能输入 ASIN 后点击搜索，仍然显示全部数据",
+          "cause": "后端代码使用了 SQLAlchemy 的 ilike() 方法，这是 PostgreSQL 专用的。MySQL 的 LIKE 本身就不区分大小写（utf8mb4 排序规则），应该用 like()",
+          "file": "E:/项目/lmg-platform/backend/routers/query.py",
+          "fix": "将 DimProduct.asin.ilike(kw) 改为 DimProduct.asin.like(kw)"
+        },
+        {
+          "title": "问题 2：前端搜索框点击无效（闭包问题）",
+          "symptom": "在搜索框输入关键词后点击搜索按钮，数据不变",
+          "cause": "fetchData 使用 useCallback 包裹，keyword 在闭包中被捕获。用户输入后 state 更新，但 fetchData 中的 keyword 可能是旧值。此外 Input.Search 的 enterButton 使用 JSX 元素可能导致点击事件不触发",
+          "file": "E:/项目/lmg-platform/frontend/src/pages/DataQuery.jsx",
+          "fix": "1) 去掉 useCallback，改用 useRef 存最新 keyword；2) Input.Search 改为普通 Input + onPressEnter；3) 搜索按钮直接调用 fetchData 并传入 keyword 参数"
+        },
+        {
+          "title": "问题 3：后端端口冲突导致旧代码未加载",
+          "symptom": "修改后端代码后重启，API 仍然返回旧结果",
+          "cause": "多个 Python 进程同时占用 8000 端口（旧进程未完全退出），新启动的 uvicorn 实际上没有成功绑定端口，请求被旧进程处理",
+          "file": "E:/项目/lmg-platform/backend/main.py",
+          "fix": "1) taskkill /F /IM python.exe 杀掉所有 Python 进程；2) 用 netstat -ano | grep :8000 确认端口已释放；3) 重新启动 uvicorn"
+        },
+        {
+          "title": "问题 4：前端代理指向错误端口",
+          "symptom": "后端在 8000 端口已修复，但前端请求仍然返回旧数据",
+          "cause": "Vite 代理配置中 target 指向 localhost:8001，而后端运行在 8000 端口",
+          "file": "E:/项目/lmg-platform/frontend/vite.config.js",
+          "fix": "将 proxy target 从 http://localhost:8001 改为 http://localhost:8000，并重启前端 dev server"
+        },
+        {
+          "title": "问题 5：产品信息表中无交易的产品查不到",
+          "symptom": "产品信息表中有成本的产品（如 B0FQJ48WLS）在数据查询中找不到",
+          "cause": "monthly_summary 只为有交易记录的产品创建，没有交易的产品不会生成 summary 记录",
+          "file": "E:/项目/lmg-platform/backend/routers/import_data.py",
+          "fix": "新增 _ensure_all_products_have_summary() 函数，在导入后为所有有成本但无 summary 的产品补建记录（所有月份）。查询改为从 DimProduct 左连接 MonthlySummary"
+        },
+        {
+          "title": "问题 6：广告费被复制到所有月份",
+          "symptom": "一个产品的广告费被重复写入 12 个月的 summary 中",
+          "cause": "_process_advertising_sheet 遍历产品的所有月份 summary 并设置相同的 ad_spend，导致广告费被复制",
+          "file": "E:/项目/lmg-platform/backend/routers/import_data.py",
+          "fix": "1) 从交易数据推断广告归属月份（取订单最多的月份）；2) 广告导入只更新该特定月份的 summary；3) 如果该月份 summary 不存在则自动创建"
+        },
+        {
+          "title": "问题 7：广告 CSV 被重复导入导致数据膨胀",
+          "symptom": "raw_advertising 表中同一份 CSV 被导入了 5 次，数据是实际的 5 倍",
+          "cause": "standalone CSV 导入路径（/advertising）在插入新数据前不清除旧数据，每次导入都会追加",
+          "file": "E:/项目/lmg-platform/backend/routers/import_data.py",
+          "fix": "1) 导入前先删除该国家的旧 raw_advertising 数据；2) 工作簿导入也清除所有 raw 表（raw_advertising, raw_storage_fee, raw_returns, raw_inbound, raw_long_term_storage）"
+        },
+        {
+          "title": "问题 8：3 个 ASIN 广告费写入错误月份",
+          "symptom": "B0FPF7L8F4、B08PXZBGDV、B0FQJ48WLS 的广告费被写入 12 月而非 5 月",
+          "cause": "补建 summary 时使用了最新月份（12 月），广告导入更新了所有月份的 summary，导致广告费被写入 12 月",
+          "file": "E:/项目/lmg-platform/backend/routers/import_data.py",
+          "fix": "1) 手动将广告费从 12 月移到 5 月；2) 修改补建逻辑，为无 summary 的产品创建所有月份的记录；3) 广告导入只更新特定月份"
+        },
+        {
+          "title": "问题 9：费用导入按 ASIN 聚合丢失月份信息",
+          "symptom": "仓储费/退货费/入库费被写入所有月份而非正确月份",
+          "cause": "_process_fee_sheet 按 ASIN 汇总费用后更新所有月份的 summary，没有使用 month_of_charge 字段",
+          "file": "E:/项目/lmg-platform/backend/routers/import_data.py",
+          "fix": "改为按 (asin, month_of_charge) 分组汇总，查找对应月份的 DimTime，只更新该月份的 summary"
+        },
+        {
+          "title": "问题 10：无订单产品成本显示为单位成本",
+          "symptom": "没有订单的产品显示了采购成本（如 M3P 显示 389.48），实际上没有订单就没有采购",
+          "cause": "在 order_qty=0 时将 cost_rmb（单位成本）直接赋值给 product_cost_rmb",
+          "file": "E:/项目/lmg-platform/backend/routers/query.py + import_data.py",
+          "fix": "成本 = 单价 * 下单数量，order_qty=0 时成本为 0。广告/仓储等费用如实显示（与订单无关）"
+        }
+      ]
+    },
+    "9": {
+      "title": "9. 部署与访问",
+      "commands": [
+        ["后端", "cd E:/项目/lmg-platform/backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload"],
+        ["前端", "cd E:/项目/lmg-platform/frontend && npm run dev"],
+        ["数据库", "MySQL 8.0，数据库名 lmg_platform，端口 3306"]
+      ],
+      "addresses": [
+        "本机访问: http://localhost:5173",
+        "局域网访问: http://192.168.2.222:5173（需开放防火墙端口 5173 和 8000）",
+        "后端 API 文档: http://localhost:8000/docs",
+        "健康检查: http://localhost:8000/health"
+      ],
+      "firewall": "以管理员身份运行 CMD:\nnetsh advfirewall firewall add rule name=\"LMG Frontend\" dir=in action=allow protocol=tcp localport=5173\nnetsh advfirewall firewall add rule name=\"LMG Backend\" dir=in action=allow protocol=tcp localport=8000"
+    }
+  }
+}
