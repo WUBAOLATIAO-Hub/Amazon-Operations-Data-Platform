@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, cast, String
 from database import get_db
-from models import MonthlySummary, DimCountry, DimTime, DimProduct
+from models import MonthlySummary, DimCountry, DimTime, DimProduct, DimStore
 
 router = APIRouter()
 
@@ -10,6 +10,7 @@ router = APIRouter()
 @router.get("/summary")
 def get_ad_summary(
     country: str = Query(None, description="国家代码"),
+    store: str = Query(None, description="店铺代码"),
     year_month: str = Query(None, description="年月，如 2026-05"),
     db: Session = Depends(get_db),
 ):
@@ -28,6 +29,8 @@ def get_ad_summary(
             q = q.join(DimTime, MonthlySummary.time_id == DimTime.id).filter(
                 DimTime.year_month == year_month
             )
+        if store:
+            q = q.join(DimStore, MonthlySummary.store_id == DimStore.id).filter(DimStore.code == store)
 
         row = q.one()
 
@@ -44,6 +47,7 @@ def get_ad_summary(
 @router.get("/detail")
 def get_ad_detail(
     country: str = Query(None, description="国家代码"),
+    store: str = Query(None, description="店铺代码"),
     year_month: str = Query(None, description="年月"),
     sort_by: str = Query("ad_spend", description="排序字段"),
     sort_order: str = Query("desc", description="排序方向: asc/desc"),
@@ -75,6 +79,8 @@ def get_ad_detail(
             q = q.join(DimTime, MonthlySummary.time_id == DimTime.id).filter(
                 DimTime.year_month == year_month
             )
+        if store:
+            q = q.join(DimStore, MonthlySummary.store_id == DimStore.id).filter(DimStore.code == store)
 
         # 排序
         sort_column_map = {

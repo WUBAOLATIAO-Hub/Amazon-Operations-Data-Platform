@@ -6,6 +6,7 @@ import {
   BarChartOutlined,
   ImportOutlined,
   SearchOutlined,
+  SettingOutlined,
 } from '@ant-design/icons'
 
 const { Sider, Content, Header } = AntLayout
@@ -30,6 +31,11 @@ const menuItems = [
     key: '/query',
     icon: <SearchOutlined />,
     label: '数据查询',
+  },
+  {
+    key: '/admin',
+    icon: <SettingOutlined />,
+    label: '系统管理',
   },
 ]
 

@@ -50,7 +50,7 @@ export default function DataQuery() {
     setLoading(true)
     try {
       const kw = keywordRef.current.trim()
-      const params = { country, page, page_size: pageSize }
+      const params = { country: 'US', page, page_size: pageSize }
       if (store) params.store = store
       if (year) params.year = year
       if (month) params.month = month
@@ -73,14 +73,14 @@ export default function DataQuery() {
 
   useEffect(() => { fetchData() }, [])
   const fetchStores = (autoSelect = true) => {
-    getStores(country).then(res => {
-      const opts = (res.data || []).map(s => ({ value: s.code, label: s.name }))
+    getStores().then(res => {
+      const opts = [{ value: '', label: '全部店铺' }, ...(res.data || []).map(s => ({ value: s.code, label: s.name }))]
       setStoreOptions(opts)
       if (autoSelect && opts.length > 0) setStore(prev => prev || opts[0].value)
     }).catch(() => {})
   }
 
-  useEffect(() => { setStore(''); setStoreOptions([]); fetchStores(false) }, [country])
+  useEffect(() => { fetchStores(false) }, [])
 
   const handleSearch = () => {
     fetchData(1, pagination.pageSize, sorter.field, sorter.order)
@@ -261,8 +261,7 @@ export default function DataQuery() {
       {/* 筛选栏 */}
       <Card size="small" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-          <Select style={{ width: 160 }} value={store || undefined} onChange={setStore} options={storeOptions} placeholder="店铺" showSearch={false} onDropdownVisibleChange={(open) => { if (open) fetchStores() }} />
-          <Select style={{ width: 120 }} value={country} onChange={setCountry} options={COUNTRY_OPTIONS} />
+          <Select style={{ width: 160 }} value={store || undefined} onChange={setStore} options={storeOptions} placeholder="全部店铺" showSearch={false} onDropdownVisibleChange={(open) => { if (open) fetchStores() }} />
           <Select style={{ width: 110 }} value={year} onChange={setYear} options={YEAR_OPTIONS} />
           <Select style={{ width: 100 }} value={month} onChange={setMonth} options={MONTH_OPTIONS} />
           <Input

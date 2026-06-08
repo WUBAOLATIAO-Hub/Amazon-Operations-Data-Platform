@@ -31,7 +31,7 @@ def get_monthly_summary(
         store_id = None
         if store:
             from models import DimStore
-            store_obj = db.query(DimStore).filter(DimStore.code == store, DimStore.country_id == country_id).first()
+            store_obj = db.query(DimStore).filter(DimStore.code == store).first()
             if store_obj:
                 store_id = store_obj.id
             else:
@@ -54,9 +54,6 @@ def get_monthly_summary(
             ms_on.append(MonthlySummary.time_id.in_(time_ids))
         if store_id:
             ms_on.append(MonthlySummary.store_id == store_id)
-        else:
-            # 未选店铺返回空
-            ms_on.append(MonthlySummary.store_id == -1)
 
         # 从 DimProduct 出发，左连接 MonthlySummary，确保所有产品都出现
         q = (

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Select, Tabs, Upload, Card, Alert, Descriptions, Spin, message, Typography, Space, Tag, Collapse, Input } from 'antd'
 import { InboxOutlined, CheckCircleOutlined, CloseCircleOutlined, WarningOutlined } from '@ant-design/icons'
-import { getImportSupported, uploadFile, uploadWorkbook } from '../api'
+import { getImportSupported, uploadFile, uploadWorkbook, getStores } from '../api'
 
 const { Dragger } = Upload
 const { Text, Title } = Typography
@@ -28,6 +28,9 @@ const IMPORT_TABS = [
 export default function DataImport() {
   const [country, setCountry] = useState('US')
   const [store, setStore] = useState('')
+  const [storeOptions, setStoreOptions] = useState([])
+  const [importYear, setImportYear] = useState(2026)
+  const [importMonth, setImportMonth] = useState(5)
   const [activeTab, setActiveTab] = useState('transactions')
 
   // 各类型的上传状态
@@ -41,6 +44,15 @@ export default function DataImport() {
   // 支持的字段信息
   const [supportedInfo, setSupportedInfo] = useState({})
   const [loadingSupported, setLoadingSupported] = useState(false)
+
+  // 获取店铺列表
+  useEffect(() => {
+    getStores().then(res => {
+      const opts = (res.data || []).map(s => ({ value: s.code, label: s.name }))
+      setStoreOptions(opts)
+      if (opts.length > 0 && !store) setStore(opts[0].value)
+    }).catch(() => {})
+  }, [])
 
   // 获取支持的字段信息
   useEffect(() => {
@@ -76,7 +88,7 @@ export default function DataImport() {
   const handleUpload = async ({ file, onSuccess, onError }, type) => {
     setUploading((prev) => ({ ...prev, [type]: true }))
     try {
-      const res = await uploadFile(type, file, country, store)
+      const res = await uploadFile(type, file, country, store, importYear, importMonth)
       const data = res.data
       setResults((prev) => ({
         ...prev,
@@ -227,7 +239,7 @@ export default function DataImport() {
     setWbUploading(true)
     setWbResult(null)
     try {
-      const res = await uploadWorkbook(file, country, store)
+      const res = await uploadWorkbook(file, country, store, importYear, importMonth)
       setWbResult(res.data)
       message.success('工作簿导入完成')
       onSuccess(res.data)
@@ -346,23 +358,14 @@ export default function DataImport() {
 
   return (
     <div>
-      {/* 国家选择 */}
       <div style={{ marginBottom: 24, display: 'flex', gap: 16, alignItems: 'center' }}>
-        <span style={{ fontWeight: 500 }}>数据国家：</span>
-        <Select
-          style={{ width: 160 }}
-          value={country}
-          onChange={setCountry}
-          options={COUNTRY_OPTIONS}
-        />
-        <span style={{ fontWeight: 500 }}>店铺名称：</span>
-        <Input
-          style={{ width: 200 }}
-          value={store}
-          onChange={(e) => setStore(e.target.value)}
-          placeholder="输入店铺名称"
-          allowClear
-        />
+        <span style={{ fontWeight: 500 }}>店铺：</span>
+        <Select style={{ width: 180 }} value={store || undefined} onChange={setStore} options={storeOptions} placeholder="选择店铺" />
+        <span style={{ fontWeight: 500 }}>导入月份：</span>
+        <Select style={{ width: 100 }} value={importYear} onChange={setImportYear}
+          options={[{value:2025,label:'2025年'},{value:2026,label:'2026年'}]} />
+        <Select style={{ width: 80 }} value={importMonth} onChange={setImportMonth}
+          options={Array.from({length:12},(_,i)=>({value:i+1,label:`${i+1}月`}))} />
       </div>
 
       {/* Tabs */}

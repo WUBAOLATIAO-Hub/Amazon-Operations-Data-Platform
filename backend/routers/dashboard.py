@@ -37,9 +37,6 @@ def get_summary(
             q = q.join(DimStore, MonthlySummary.store_id == DimStore.id).filter(
                 DimStore.code == store
             )
-        else:
-            # 未选店铺时返回空数据
-            q = q.filter(MonthlySummary.store_id == -1)
         if year or month:
             q = q.join(DimTime, MonthlySummary.time_id == DimTime.id)
             if year:
@@ -175,6 +172,7 @@ def get_trend(
 @router.get("/product-distribution")
 def get_product_distribution(
     country: str = Query(None, description="国家代码"),
+    store: str = Query(None, description="店铺代码"),
     year: int = Query(None, description="年份"),
     month: int = Query(None, description="月份"),
     db: Session = Depends(get_db),
@@ -195,6 +193,8 @@ def get_product_distribution(
 
         if country:
             q = q.filter(DimCountry.code == country.upper())
+        if store:
+            q = q.join(DimStore, MonthlySummary.store_id == DimStore.id).filter(DimStore.code == store)
         if year or month:
             q = q.join(DimTime, MonthlySummary.time_id == DimTime.id)
             if year:

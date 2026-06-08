@@ -1,16 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Row, Col, Select, Card, Table, Statistic, Spin, message } from 'antd'
 import { DollarOutlined, AimOutlined, LineChartOutlined } from '@ant-design/icons'
-import { getAdvertisingSummary, getAdvertisingDetail } from '../api'
-
-// 国家选项
-const COUNTRY_OPTIONS = [
-  { value: 'US', label: '美国站' },
-  { value: 'UK', label: '英国站' },
-  { value: 'DE', label: '德国站' },
-  { value: 'JP', label: '日本站' },
-  { value: 'CA', label: '加拿大站' },
-]
+import { getAdvertisingSummary, getAdvertisingDetail, getStores } from '../api'
 
 // 最近24个月选项
 function generateMonthOptions() {
@@ -46,6 +37,8 @@ function formatInt(num) {
 
 export default function Advertising() {
   const [country, setCountry] = useState('US')
+  const [store, setStore] = useState('')
+  const [storeOptions, setStoreOptions] = useState([])
   const [month, setMonth] = useState('2026-05')
 
   const [loading, setLoading] = useState(false)
@@ -54,15 +47,24 @@ export default function Advertising() {
   const [pagination, setPagination] = useState({ current: 1, pageSize: 20, total: 0 })
   const [sorter, setSorter] = useState({})
 
+  // 获取店铺
+  useEffect(() => {
+    getStores().then(res => {
+      setStoreOptions([{value:'',label:'全部店铺'},...(res.data||[]).map(s=>({value:s.code,label:s.name}))])
+    }).catch(()=>{})
+  }, [])
+
   // 获取汇总数据
   const fetchSummary = useCallback(async () => {
     try {
-      const res = await getAdvertisingSummary({ country, year_month: month })
+      const params = { country, year_month: month }
+      if (store) params.store = store
+      const res = await getAdvertisingSummary(params)
       setSummary(res.data)
     } catch (err) {
       message.error('获取广告汇总失败：' + (err.response?.data?.detail || err.message))
     }
-  }, [country, month])
+  }, [country, store, month])
 
   // 获取明细数据
   const fetchDetail = useCallback(async (page = 1, pageSize = 20, sortField, sortOrder) => {
@@ -74,6 +76,7 @@ export default function Advertising() {
         page,
         page_size: pageSize,
       }
+      if (store) params.store = store
       if (sortField && sortOrder) {
         params.sort_by = sortField
         params.sort_order = sortOrder === 'ascend' ? 'asc' : 'desc'
@@ -92,7 +95,7 @@ export default function Advertising() {
     } finally {
       setLoading(false)
     }
-  }, [country, month])
+  }, [country, store, month])
 
   // 初始加载 & 筛选变化时加载
   useEffect(() => {
@@ -237,19 +240,10 @@ export default function Advertising() {
 
       {/* 筛选栏 */}
       <div style={{ marginBottom: 24, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-        <Select
-          style={{ width: 140 }}
-          value={country}
-          onChange={setCountry}
-          options={COUNTRY_OPTIONS}
-        />
-        <Select
-          style={{ width: 160 }}
-          value={month}
-          onChange={setMonth}
-          options={MONTH_OPTIONS}
-          placeholder="选择月份"
-        />
+        <Select style={{ width: 160 }} value={store} onChange={setStore} options={storeOptions} placeholder="全部店铺" />
+        <Select style={{ width: 140 }} value={country} onChange={setCountry}
+          options={[{value:'US',label:'美国站'},{value:'UK',label:'英国站'},{value:'DE',label:'德国站'}]} />
+        <Select style={{ width: 160 }} value={month} onChange={setMonth} options={MONTH_OPTIONS} placeholder="选择月份" />
       </div>
 
       {/* 汇总卡片 */}

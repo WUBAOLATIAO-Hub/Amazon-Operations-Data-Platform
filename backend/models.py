@@ -9,15 +9,22 @@ class DimCountry(Base):
     code = Column(String(5), unique=True, nullable=False)
     name = Column("name", String(50), nullable=False)
     currency = Column(String(5), nullable=False)
-    exchange_rate = Column(Numeric(10, 4), nullable=False)
+
+
+class DimExchangeRate(Base):
+    __tablename__ = "dim_exchange_rate"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    country_id = Column(Integer, ForeignKey("dim_country.id"), nullable=False)
+    year_month = Column("year_month", String(7), nullable=False)
+    rate = Column(Numeric(10, 4), nullable=False)
 
 
 class DimStore(Base):
     __tablename__ = "dim_store"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    code = Column(String(20), nullable=False)
-    name = Column("name", String(50), nullable=False)
-    country_id = Column(Integer, ForeignKey("dim_country.id"), nullable=False)
+    code = Column(String(50), unique=True, nullable=False)
+    name = Column("name", String(100), nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
 
 
 class DimProduct(Base):
@@ -32,7 +39,7 @@ class DimProductCost(Base):
     __tablename__ = "dim_product_cost"
     id = Column(Integer, primary_key=True, autoincrement=True)
     product_id = Column(Integer, ForeignKey("dim_product.id"), nullable=False)
-    year_month = Column(String(7), nullable=False)  # '2026-05'
+    year_month = Column("ym", String(7), nullable=False)  # '2026-05'
     cost_rmb = Column(Numeric(10, 2), default=0)
     freight_per_unit = Column(Numeric(10, 2), default=0)
     exchange_rate = Column(Numeric(10, 4), nullable=True)
@@ -117,8 +124,6 @@ class MonthlySummary(Base):
     clicks = Column(Integer, default=0)
     ad_orders = Column(Integer, default=0)
     conversion_rate = Column(Numeric(8, 4), default=0)
-    created_at = Column(TIMESTAMP, server_default=func.now())
-    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
 
 
 class RawAdvertising(Base):

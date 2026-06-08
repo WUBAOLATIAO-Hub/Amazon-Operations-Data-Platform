@@ -8,16 +8,10 @@ import {
 } from '@ant-design/icons'
 import * as echarts from 'echarts'
 import StatCard from '../components/StatCard'
-import { getDashboardSummary, getDashboardTrend, getProductDistribution, getStores } from '../api'
+import { getDashboardSummary, getDashboardTrend, getProductDistribution, getStores, getCountries } from '../api'
 
 // 国家选项
-const COUNTRY_OPTIONS = [
-  { value: 'US', label: '美国站' },
-  { value: 'UK', label: '英国站' },
-  { value: 'DE', label: '德国站' },
-  { value: 'JP', label: '日本站' },
-  { value: 'CA', label: '加拿大站' },
-]
+const COUNTRY_OPTIONS = [{ value: '', label: '全部国家' }]
 
 // 年份选项（最近5年）
 const currentYear = new Date().getFullYear()
@@ -49,11 +43,12 @@ function formatPercent(num) {
 
 export default function Dashboard() {
   // 筛选状态
-  const [country, setCountry] = useState('US')
+  const [country, setCountry] = useState('')
   const [year, setYear] = useState(currentYear)
   const [month, setMonth] = useState(5)  // 默认5月，与DataQuery保持一致
   const [store, setStore] = useState('')
   const [storeOptions, setStoreOptions] = useState([])
+  const [countryOptions, setCountryOptions] = useState(COUNTRY_OPTIONS)
 
   // 数据状态
   const [loading, setLoading] = useState(false)
@@ -72,14 +67,16 @@ export default function Dashboard() {
 
   // 获取店铺列表
   useEffect(() => {
-    setStore('')
-    setStoreOptions([])
     fetchStores(false)
-  }, [country])
+    getCountries().then(res => {
+      const opts = [{ value: '', label: '全部国家' }, ...(res.data || []).map(c => ({ value: c.code, label: c.name }))]
+      setCountryOptions(opts)
+    }).catch(() => {})
+  }, [])
 
   const fetchStores = (autoSelect = true) => {
-    getStores(country).then(res => {
-      const opts = (res.data || []).map(s => ({ value: s.code, label: s.name }))
+    getStores().then(res => {
+      const opts = [{ value: '', label: '全部店铺' }, ...(res.data || []).map(s => ({ value: s.code, label: s.name }))]
       setStoreOptions(opts)
       if (autoSelect && opts.length > 0) setStore(prev => prev || opts[0].value)
     }).catch(() => {})
@@ -88,7 +85,8 @@ export default function Dashboard() {
   // 获取汇总数据
   const fetchSummary = useCallback(async () => {
     try {
-      const params = { country, year }
+      const params = { year }
+      if (country) params.country = country
       if (month) params.month = month
       if (store) params.store = store
       const res = await getDashboardSummary(params)
@@ -101,11 +99,10 @@ export default function Dashboard() {
   // 获取趋势数据
   const fetchTrend = useCallback(async () => {
     try {
-      const res = await getDashboardTrend({
-        country,
-        dimension: trendMode,
-        store,
-      })
+      const params = { dimension: trendMode }
+      if (country) params.country = country
+      if (store) params.store = store
+      const res = await getDashboardTrend(params)
       setTrendData(res.data?.data || [])
     } catch (err) {
       message.error('获取趋势数据失败：' + (err.response?.data?.detail || err.message))
@@ -115,9 +112,10 @@ export default function Dashboard() {
   // 获取产品分布数据
   const fetchDistribution = useCallback(async () => {
     try {
-      const params = { country }
-      if (year) params.year = year
+      const params = { year }
+      if (country) params.country = country
       if (month) params.month = month
+      if (store) params.store = store
       const res = await getProductDistribution(params)
       setDistributionData(res.data?.data || [])
     } catch (err) {
@@ -238,7 +236,9 @@ export default function Dashboard() {
     }
     const chart = pieChartInstanceRef.current
 
-    const pieData = distributionData.slice(0, 10).map(item => ({
+    // 全部店铺+全部国家 → 只显示Top10；选了具体店铺/国家 → 全部显示
+    const limit = (!store && !country) ? 10 : distributionData.length
+    const pieData = distributionData.slice(0, limit).map(item => ({
       name: item.name,
       value: item.sales_rmb,
     }))
@@ -275,7 +275,7 @@ export default function Dashboard() {
     }
 
     chart.setOption(option, true)
-  }, [distributionData])
+  }, [distributionData, store, country])
 
   // 初始化/更新柱状图
   useEffect(() => {
@@ -286,10 +286,11 @@ export default function Dashboard() {
     }
     const chart = barChartInstanceRef.current
 
-    const top10 = distributionData.slice(0, 10)
-    const names = top10.map(item => item.name)
-    const salesData = top10.map(item => item.sales_rmb)
-    const profitData = top10.map(item => item.net_profit)
+    const limit = (!store && !country) ? 10 : distributionData.length
+    const chartData = distributionData.slice(0, limit)
+    const names = chartData.map(item => item.name)
+    const salesData = chartData.map(item => item.sales_rmb)
+    const profitData = chartData.map(item => item.net_profit)
 
     const option = {
       tooltip: {
@@ -333,7 +334,7 @@ export default function Dashboard() {
           type: 'bar',
           data: profitData,
           itemStyle: {
-            color: params => params.value >= 0 ? '#52c41a' : '#cf1322',
+            color: params => params.value >= 0 ? '#fa8c16' : '#cf1322',
           },
           barMaxWidth: 40,
         },
@@ -341,7 +342,7 @@ export default function Dashboard() {
     }
 
     chart.setOption(option, true)
-  }, [distributionData])
+  }, [distributionData, store, country])
 
   // 监听窗口 resize
   useEffect(() => {
@@ -371,36 +372,16 @@ export default function Dashboard() {
 
   return (
     <div>
-      {/* 筛选栏 */}
-      <div style={{ marginBottom: 24, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-        <Select
-          style={{ width: 140 }}
-          value={country}
-          onChange={setCountry}
-          options={COUNTRY_OPTIONS}
-        />
-        <Select
-          style={{ width: 160 }}
-          value={store || undefined}
-          onChange={setStore}
-          options={storeOptions}
-          placeholder="选择店铺"
-          showSearch={false}
-          onDropdownVisibleChange={(open) => { if (open) fetchStores() }}
-        />
-        <Select
-          style={{ width: 120 }}
-          value={year}
-          onChange={setYear}
-          options={YEAR_OPTIONS}
-        />
-        <Select
-          style={{ width: 120 }}
-          value={month}
-          onChange={setMonth}
-          options={MONTH_OPTIONS}
-          placeholder="选择月份"
-          allowClear
+      {/* 筛选栏: 店铺 > 国家 > 年月 */}
+      <div style={{ marginBottom: 24, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontWeight: 600, fontSize: 13, color: '#666' }}>店铺</span>
+        <Select style={{ width: 170 }} value={store} onChange={setStore} options={storeOptions}
+          onDropdownVisibleChange={(open) => { if (open) fetchStores() }} />
+        <span style={{ fontWeight: 600, fontSize: 13, color: '#666' }}>国家</span>
+        <Select style={{ width: 130 }} value={country} onChange={setCountry} options={countryOptions} />
+        <span style={{ fontWeight: 600, fontSize: 13, color: '#666' }}>时间</span>
+        <Select style={{ width: 110 }} value={year} onChange={setYear} options={YEAR_OPTIONS} />
+        <Select style={{ width: 90 }} value={month} onChange={setMonth} options={MONTH_OPTIONS} />
         />
       </div>
 
@@ -447,27 +428,6 @@ export default function Dashboard() {
         </Col>
       </Row>
 
-      {/* 趋势图 */}
-      <Card
-        title="月度趋势"
-        extra={
-          <Segmented
-            options={[
-              { label: '月度', value: 'monthly' },
-              { label: '年度', value: 'yearly' },
-            ]}
-            value={trendMode}
-            onChange={setTrendMode}
-          />
-        }
-        style={{ marginBottom: 16 }}
-      >
-        <div
-          ref={chartRef}
-          style={{ width: '100%', height: 400 }}
-        />
-      </Card>
-
       {/* 饼图和柱状图 */}
       <Row gutter={16}>
         <Col xs={24} lg={12}>
@@ -481,6 +441,26 @@ export default function Dashboard() {
           </Card>
         </Col>
       </Row>
+
+      {/* 趋势图 */}
+      <Card
+        title="月度趋势"
+        extra={
+          <Segmented
+            options={[
+              { label: '月度', value: 'monthly' },
+              { label: '年度', value: 'yearly' },
+            ]}
+            value={trendMode}
+            onChange={setTrendMode}
+          />
+        }
+      >
+        <div
+          ref={chartRef}
+          style={{ width: '100%', height: 400 }}
+        />
+      </Card>
     </div>
   )
 }

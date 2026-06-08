@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard'
 import Advertising from './pages/Advertising'
 import DataImport from './pages/DataImport'
 import DataQuery from './pages/DataQuery'
+import SystemAdmin from './pages/Admin'
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
             <Route path="advertising" element={<Advertising />} />
             <Route path="import" element={<DataImport />} />
             <Route path="query" element={<DataQuery />} />
+            <Route path="admin" element={<SystemAdmin />} />
           </Route>
         </Routes>
       </BrowserRouter>
