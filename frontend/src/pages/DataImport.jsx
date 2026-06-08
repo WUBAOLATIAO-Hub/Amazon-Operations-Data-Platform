@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { Select, Tabs, Upload, Card, Alert, Descriptions, Spin, message, Typography, Space, Tag, Collapse, Input } from 'antd'
+import { Select, Tabs, Upload, Card, Alert, Spin, message, Typography, Space, Tag, Button, Collapse } from 'antd'
 import { InboxOutlined, CheckCircleOutlined, CloseCircleOutlined, WarningOutlined } from '@ant-design/icons'
 import { getImportSupported, uploadFile, uploadWorkbook, getStores } from '../api'
+import axios from 'axios'
 
 const { Dragger } = Upload
 const { Text, Title } = Typography
@@ -177,7 +178,7 @@ export default function DataImport() {
         {/* 拖拽上传 */}
         <Dragger
           name="file"
-          multiple={false}
+          multiple={true}
           accept={tab.accept}
           showUploadList={false}
           beforeUpload={(file) => beforeUpload(file, tab.key)}
@@ -239,7 +240,7 @@ export default function DataImport() {
     setWbUploading(true)
     setWbResult(null)
     try {
-      const res = await uploadWorkbook(file, country, store, importYear, importMonth)
+      const res = await uploadWorkbook(file, 'auto', store, importYear, importMonth)
       setWbResult(res.data)
       message.success('工作簿导入完成')
       onSuccess(res.data)
@@ -261,7 +262,9 @@ export default function DataImport() {
     }
 
     const sheets = wbResult.sheets || {}
-    const items = Object.entries(sheets).map(([name, info]) => ({
+    const countrySummary = wbResult.country_summary || {}
+
+    const sheetItems = Object.entries(sheets).map(([name, info]) => ({
       key: name,
       label: (
         <Space>
@@ -270,6 +273,7 @@ export default function DataImport() {
           </Tag>
           <span>{name}</span>
           {info.type && <Tag color="blue">{info.type}</Tag>}
+          {info.country && <Tag color="purple">{info.country}</Tag>}
         </Space>
       ),
       children: (
@@ -294,10 +298,27 @@ export default function DataImport() {
         <Alert
           type="success"
           showIcon
-          message={`工作簿导入完成 - 国家: ${wbResult.country}`}
+          message={`工作簿导入完成 - 国家: ${(wbResult.countries || [wbResult.country]).join(', ')}`}
           style={{ marginBottom: 12 }}
         />
-        <Collapse items={items} defaultActiveKey={Object.keys(sheets).filter(k => sheets[k].status === 'success')} />
+        {/* 国家汇总卡片 */}
+        {Object.keys(countrySummary).length > 0 && (
+          <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+            {Object.entries(countrySummary).map(([cc, s]) => (
+              <Card key={cc} size="small" style={{ flex: 1, minWidth: 200 }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>{cc}</div>
+                <div style={{ fontSize: 12, lineHeight: 1.8 }}>
+                  订单: {s.order_count} (raw {s.raw_orders}单/{s.raw_refunds}退款)<br/>
+                  销售额: ${s.sales_usd?.toLocaleString()}<br/>
+                  广告: ${s.ad_spend_usd?.toLocaleString()}<br/>
+                  仓储: ${s.storage_fee_usd?.toLocaleString()}<br/>
+                  净利润: {s.net_profit_rmb?.toLocaleString()} RMB
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+        <Collapse items={sheetItems} defaultActiveKey={Object.keys(sheets).filter(k => sheets[k].status === 'success')} />
       </div>
     )
   }
@@ -367,6 +388,40 @@ export default function DataImport() {
         <Select style={{ width: 80 }} value={importMonth} onChange={setImportMonth}
           options={Array.from({length:12},(_,i)=>({value:i+1,label:`${i+1}月`}))} />
       </div>
+
+      {/* 文件夹导入 */}
+      <Card size="small" style={{ marginBottom: 16, background: '#e6f7ff' }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <strong>📁 文件夹导入：</strong>
+          <Upload
+            multiple
+            accept=".csv,.xlsx"
+            showUploadList={false}
+            beforeUpload={() => false}
+            onChange={async (info) => {
+              const files = info.fileList.map(f => f.originFileObj).filter(Boolean)
+              if (files.length === 0) return
+              const form = new FormData()
+              files.forEach(f => form.append('files', f))
+              form.append('store', store)
+              form.append('import_year', importYear)
+              form.append('import_month', importMonth)
+              try {
+                const res = await axios.post('/api/import/folder', form, {
+                  headers: { 'Content-Type': 'multipart/form-data' },
+                  timeout: 120000
+                })
+                message.success(res.data.message || '导入完成')
+              } catch(e) {
+                message.error('导入失败: ' + (e.response?.data?.detail || e.message))
+              }
+            }}
+          >
+            <Button icon={<span>📂</span>}>选择文件（可多选）</Button>
+          </Upload>
+          <span style={{ color: '#666', fontSize: 12 }}>自动识别类型，支持CSV和XLSX混合上传</span>
+        </div>
+      </Card>
 
       {/* Tabs */}
       <Tabs

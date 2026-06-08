@@ -121,6 +121,7 @@ def get_summary(
 @router.get("/trend")
 def get_trend(
     country: str = Query(None, description="国家代码"),
+    store: str = Query(None, description="店铺代码"),
     dimension: str = Query("month", description="聚合维度: month/year"),
     db: Session = Depends(get_db),
 ):
@@ -144,6 +145,10 @@ def get_trend(
         if country:
             q = q.join(DimCountry, MonthlySummary.country_id == DimCountry.id).filter(
                 DimCountry.code == country.upper()
+            )
+        if store:
+            q = q.join(DimStore, MonthlySummary.store_id == DimStore.id).filter(
+                DimStore.code == store
             )
 
         if dimension == "year":

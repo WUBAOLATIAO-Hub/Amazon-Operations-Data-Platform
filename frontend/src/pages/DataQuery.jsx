@@ -1,13 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Select, Input, Button, Table, Card, message, Space, Statistic, Row, Col } from 'antd'
 import { SearchOutlined, ReloadOutlined } from '@ant-design/icons'
-import { getMonthlySummary, getStores } from '../api'
-
-const COUNTRY_OPTIONS = [
-  { value: 'US', label: '美国站' },
-  { value: 'UK', label: '英国站' },
-  { value: 'DE', label: '德国站' },
-]
+import { getMonthlySummary, getStores, getCountries } from '../api'
 
 const YEAR_OPTIONS = [
   { value: 0, label: '全部' },
@@ -31,26 +25,28 @@ function fmtRate(n) {
 }
 
 export default function DataQuery() {
-  const [country, setCountry] = useState('US')
+  const [country, setCountry] = useState('')
   const [year, setYear] = useState(2026)
   const [month, setMonth] = useState(5)
   const [store, setStore] = useState('')
   const [storeOptions, setStoreOptions] = useState([])
+  const [countryOptions, setCountryOptions] = useState([{ value: '', label: '全部国家' }])
   const [keyword, setKeyword] = useState('')
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState([])
-  const [pagination, setPagination] = useState({ current: 1, pageSize: 200, total: 0 })
+  const [pagination, setPagination] = useState({ current: 1, pageSize: 500, total: 0 })
   const [sorter, setSorter] = useState({})
 
   // 用ref存最新keyword，避免闭包问题
   const keywordRef = useRef(keyword)
   keywordRef.current = keyword
 
-  const fetchData = async (page = 1, pageSize = 200, sortField, sortOrder) => {
+  const fetchData = async (page = 1, pageSize = 500, sortField, sortOrder) => {
     setLoading(true)
     try {
       const kw = keywordRef.current.trim()
-      const params = { country: 'US', page, page_size: pageSize }
+      const params = { page, page_size: pageSize }
+      if (country) params.country = country
       if (store) params.store = store
       if (year) params.year = year
       if (month) params.month = month
@@ -72,6 +68,12 @@ export default function DataQuery() {
   }
 
   useEffect(() => { fetchData() }, [])
+  useEffect(() => {
+    getCountries().then(res => {
+      const opts = [{ value: '', label: '全部国家' }, ...(res.data || []).map(c => ({ value: c.code, label: c.name }))]
+      setCountryOptions(opts)
+    }).catch(() => {})
+  }, [])
   const fetchStores = (autoSelect = true) => {
     getStores().then(res => {
       const opts = [{ value: '', label: '全部店铺' }, ...(res.data || []).map(s => ({ value: s.code, label: s.name }))]
@@ -88,6 +90,7 @@ export default function DataQuery() {
 
   const handleReset = () => {
     setKeyword('')
+    setCountry('')
     setYear(2026)
     setMonth(5)
     keywordRef.current = ''
@@ -262,6 +265,7 @@ export default function DataQuery() {
       <Card size="small" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           <Select style={{ width: 160 }} value={store || undefined} onChange={setStore} options={storeOptions} placeholder="全部店铺" showSearch={false} onDropdownVisibleChange={(open) => { if (open) fetchStores() }} />
+          <Select style={{ width: 130 }} value={country} onChange={setCountry} options={countryOptions} />
           <Select style={{ width: 110 }} value={year} onChange={setYear} options={YEAR_OPTIONS} />
           <Select style={{ width: 100 }} value={month} onChange={setMonth} options={MONTH_OPTIONS} />
           <Input

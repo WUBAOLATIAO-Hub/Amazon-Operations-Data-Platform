@@ -236,12 +236,11 @@ export default function Dashboard() {
     }
     const chart = pieChartInstanceRef.current
 
-    // 全部店铺+全部国家 → 只显示Top10；选了具体店铺/国家 → 全部显示
-    const limit = (!store && !country) ? 10 : distributionData.length
-    const pieData = distributionData.slice(0, limit).map(item => ({
-      name: item.name,
-      value: item.sales_rmb,
-    }))
+    // 饼图: Top15 + 其他
+    const pieLimit = (!store && !country) ? 10 : 15
+    let pieData = distributionData.slice(0, pieLimit).map(item => ({ name: item.name, value: item.sales_rmb }))
+    const rest = distributionData.slice(pieLimit).reduce((s, i) => s + (i.sales_rmb || 0), 0)
+    if (rest > 0) pieData.push({ name: '其他', value: rest })
 
     const option = {
       tooltip: {
@@ -286,8 +285,8 @@ export default function Dashboard() {
     }
     const chart = barChartInstanceRef.current
 
-    const limit = (!store && !country) ? 10 : distributionData.length
-    const chartData = distributionData.slice(0, limit)
+    const barLimit = (!store && !country) ? 10 : 15
+    const chartData = distributionData.slice(0, barLimit)
     const names = chartData.map(item => item.name)
     const salesData = chartData.map(item => item.sales_rmb)
     const profitData = chartData.map(item => item.net_profit)
@@ -382,7 +381,6 @@ export default function Dashboard() {
         <span style={{ fontWeight: 600, fontSize: 13, color: '#666' }}>时间</span>
         <Select style={{ width: 110 }} value={year} onChange={setYear} options={YEAR_OPTIONS} />
         <Select style={{ width: 90 }} value={month} onChange={setMonth} options={MONTH_OPTIONS} />
-        />
       </div>
 
       {/* 统计卡片 */}

@@ -9,7 +9,7 @@ router = APIRouter()
 
 @router.get("/monthly-summary")
 def get_monthly_summary(
-    country: str = FastAPIQuery("US", description="国家代码"),
+    country: str = FastAPIQuery("", description="国家代码，空=全部国家"),
     year: int = FastAPIQuery(None, description="年份"),
     month: int = FastAPIQuery(None, description="月份"),
     store: str = FastAPIQuery(None, description="店铺代码"),
@@ -17,15 +17,17 @@ def get_monthly_summary(
     sort_by: str = FastAPIQuery("net_profit_rmb", description="排序字段"),
     sort_order: str = FastAPIQuery("desc", description="排序方向 asc/desc"),
     page: int = FastAPIQuery(1, ge=1),
-    page_size: int = FastAPIQuery(50, ge=1, le=200),
+    page_size: int = FastAPIQuery(50, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
     """按产品汇总的月度数据（所有产品都会出现，无交易的销量为0）"""
     try:
-        country_obj = db.query(DimCountry).filter(DimCountry.code == country.upper()).first()
-        if not country_obj:
-            return {"data": [], "total": 0, "page": page, "page_size": page_size}
-        country_id = country_obj.id
+        country_id = None
+        if country:
+            country_obj = db.query(DimCountry).filter(DimCountry.code == country.upper()).first()
+            if not country_obj:
+                return {"data": [], "total": 0, "page": page, "page_size": page_size}
+            country_id = country_obj.id
 
         # 获取 store_id
         store_id = None
@@ -47,9 +49,10 @@ def get_monthly_summary(
 
         # 构建 MonthlySummary 的 on 条件
         ms_on = [
-            MonthlySummary.country_id == country_id,
             MonthlySummary.product_id == DimProduct.id,
         ]
+        if country_id:
+            ms_on.append(MonthlySummary.country_id == country_id)
         if time_ids:
             ms_on.append(MonthlySummary.time_id.in_(time_ids))
         if store_id:
