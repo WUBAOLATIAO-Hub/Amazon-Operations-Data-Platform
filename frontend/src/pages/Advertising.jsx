@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Row, Col, Select, Card, Table, Statistic, Spin, message } from 'antd'
 import { DollarOutlined, AimOutlined, LineChartOutlined } from '@ant-design/icons'
-import { getAdvertisingSummary, getAdvertisingDetail, getStores } from '../api'
+import { getAdvertisingSummary, getAdvertisingDetail, getStores, getCountries } from '../api'
 
 // 最近24个月选项
 function generateMonthOptions() {
@@ -36,9 +36,10 @@ function formatInt(num) {
 }
 
 export default function Advertising() {
-  const [country, setCountry] = useState('US')
+  const [country, setCountry] = useState('')
   const [store, setStore] = useState('')
   const [storeOptions, setStoreOptions] = useState([])
+  const [countryOptions, setCountryOptions] = useState([])
   const [month, setMonth] = useState('2026-05')
 
   const [loading, setLoading] = useState(false)
@@ -47,10 +48,13 @@ export default function Advertising() {
   const [pagination, setPagination] = useState({ current: 1, pageSize: 20, total: 0 })
   const [sorter, setSorter] = useState({})
 
-  // 获取店铺
+  // 获取店铺和国家
   useEffect(() => {
     getStores().then(res => {
       setStoreOptions([{value:'',label:'全部店铺'},...(res.data||[]).map(s=>({value:s.code,label:s.name}))])
+    }).catch(()=>{})
+    getCountries().then(res => {
+      setCountryOptions([{value:'',label:'全部国家'},...(res.data||[]).map(c=>({value:c.code,label:c.name}))])
     }).catch(()=>{})
   }, [])
 
@@ -242,7 +246,7 @@ export default function Advertising() {
       <div style={{ marginBottom: 24, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
         <Select style={{ width: 160 }} value={store} onChange={setStore} options={storeOptions} placeholder="全部店铺" />
         <Select style={{ width: 140 }} value={country} onChange={setCountry}
-          options={[{value:'US',label:'美国站'},{value:'UK',label:'英国站'},{value:'DE',label:'德国站'}]} />
+          options={countryOptions} placeholder="全部国家" />
         <Select style={{ width: 160 }} value={month} onChange={setMonth} options={MONTH_OPTIONS} placeholder="选择月份" />
       </div>
 

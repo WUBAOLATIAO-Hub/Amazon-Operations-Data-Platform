@@ -182,13 +182,16 @@ def _find_product_by_sku(db: Session, sku: str) -> DimProduct:
 def _get_or_create_monthly_summary(
     db: Session, country_id: int, product_id: int, time_id: int, store_id: int = None
 ) -> MonthlySummary:
+    filters = [
+        MonthlySummary.country_id == country_id,
+        MonthlySummary.product_id == product_id,
+        MonthlySummary.time_id == time_id,
+    ]
+    if store_id:
+        filters.append(MonthlySummary.store_id == store_id)
     summary = (
         db.query(MonthlySummary)
-        .filter(
-            MonthlySummary.country_id == country_id,
-            MonthlySummary.product_id == product_id,
-            MonthlySummary.time_id == time_id,
-        )
+        .filter(*filters)
         .first()
     )
     if not summary:
@@ -503,8 +506,7 @@ async def import_transaction(
             time_obj = _get_or_create_time(db, year, month)
             exchange_rate = _get_exchange_rate(db, country_obj, year, month)
 
-            summary = _get_or_create_monthly_summary(db, country_obj.id, product.id, time_obj.id)
-            summary.store_id = store_obj.id
+            summary = _get_or_create_monthly_summary(db, country_obj.id, product.id, time_obj.id, store_id=store_obj.id)
 
             summary.product_sales_usd = agg["product_sales"]
             summary.commission_usd = agg["selling_fee"]
@@ -827,11 +829,14 @@ async def import_advertising(
             if ad_year and ad_month:
                 time_obj = _get_or_create_time(db, ad_year, ad_month)
                 time_id = time_obj.id
-                summary = db.query(MonthlySummary).filter(
+                filters = [
                     MonthlySummary.product_id == product.id,
                     MonthlySummary.country_id == country_obj.id,
                     MonthlySummary.time_id == time_id,
-                ).first()
+                ]
+                if store_obj:
+                    filters.append(MonthlySummary.store_id == store_obj.id)
+                summary = db.query(MonthlySummary).filter(*filters).first()
                 if not summary:
                     summary = MonthlySummary(
                         country_id=country_obj.id, product_id=product.id, time_id=time_id,
@@ -844,7 +849,10 @@ async def import_advertising(
                 target_summaries = [summary]
             else:
                 # 无时间信息，更新所有月份（兼容旧逻辑）
-                target_summaries = db.query(MonthlySummary).filter(MonthlySummary.product_id == product.id).all()
+                filters = [MonthlySummary.product_id == product.id, MonthlySummary.country_id == country_obj.id]
+                if store_obj:
+                    filters.append(MonthlySummary.store_id == store_obj.id)
+                target_summaries = db.query(MonthlySummary).filter(*filters).all()
                 if not target_summaries:
                     continue
 
@@ -908,6 +916,7 @@ async def import_storage(
         country_obj = db.query(DimCountry).filter(DimCountry.code == country).first()
         if not country_obj:
             return {"detail": f"国家 {country} 不存在"}
+        store_obj = _get_or_default_store(db, store)
 
         content = await file.read()
         for encoding in ["utf-8-sig", "utf-8", "gbk", "latin-1"]:
@@ -953,6 +962,7 @@ async def import_storage(
             # 写入 raw_storage_fee
             raw_fee = RawStorageFee(
                 country_id=country_obj.id,
+                store_id=store_obj.id if store_obj else None,
                 asin=asin,
                 fnsku=str(get_col(row, "fnsku", "FNSKU") or "").strip(),
                 product_name=str(get_col(row, "product_name") or "").strip(),
@@ -1009,14 +1019,18 @@ async def import_storage(
             if month_str:
                 time_obj_for_rate = _find_time_by_month_str(db, month_str)
                 if time_obj_for_rate:
-                    summary = db.query(MonthlySummary).filter(
+                    filters = [
                         MonthlySummary.product_id == product.id,
                         MonthlySummary.country_id == country_obj.id,
                         MonthlySummary.time_id == time_obj_for_rate.id,
-                    ).first()
+                    ]
+                    if store_obj:
+                        filters.append(MonthlySummary.store_id == store_obj.id)
+                    summary = db.query(MonthlySummary).filter(*filters).first()
                     if not summary:
                         summary = MonthlySummary(
                             country_id=country_obj.id, product_id=product.id, time_id=time_obj_for_rate.id,
+                            store_id=store_obj.id if store_obj else None,
                             order_count=0, order_qty=0,
                             product_sales_usd=Decimal("0"), commission_usd=Decimal("0"), fba_fee_usd=Decimal("0"),
                             ad_spend_usd=Decimal("0"), storage_fee_usd=Decimal("0"), returns_fee_usd=Decimal("0"), inbound_fee_usd=Decimal("0"),
@@ -1026,7 +1040,10 @@ async def import_storage(
                 else:
                     target_summaries = []
             else:
-                target_summaries = db.query(MonthlySummary).filter(MonthlySummary.product_id == product.id).all()
+                filters = [MonthlySummary.product_id == product.id, MonthlySummary.country_id == country_obj.id]
+                if store_obj:
+                    filters.append(MonthlySummary.store_id == store_obj.id)
+                target_summaries = db.query(MonthlySummary).filter(*filters).all()
 
             # 按月份获取汇率
             ym_parts = None
@@ -1089,6 +1106,7 @@ async def import_returns(
         country_obj = db.query(DimCountry).filter(DimCountry.code == country).first()
         if not country_obj:
             return {"detail": f"国家 {country} 不存在"}
+        store_obj = _get_or_default_store(db, store)
 
         content = await file.read()
         for encoding in ["utf-8-sig", "utf-8", "gbk", "latin-1"]:
@@ -1132,6 +1150,7 @@ async def import_returns(
             # 写入 raw_returns
             raw_ret = RawReturns(
                 country_id=country_obj.id,
+                store_id=store_obj.id if store_obj else None,
                 asin=asin,
                 asin_fee_category=str(get_col(row, "asin_fee_category") or "").strip(),
                 fnsku=str(get_col(row, "fnsku", "FNSKU") or "").strip(),
@@ -1172,9 +1191,12 @@ async def import_returns(
             if not product:
                 continue
 
+            filters = [MonthlySummary.product_id == product.id, MonthlySummary.country_id == country_obj.id]
+            if store_obj:
+                filters.append(MonthlySummary.store_id == store_obj.id)
             summaries = (
                 db.query(MonthlySummary)
-                .filter(MonthlySummary.product_id == product.id)
+                .filter(*filters)
                 .all()
             )
 
@@ -1232,6 +1254,7 @@ async def import_inbound(
         country_obj = db.query(DimCountry).filter(DimCountry.code == country).first()
         if not country_obj:
             return {"detail": f"国家 {country} 不存在"}
+        store_obj = _get_or_default_store(db, store)
 
         content = await file.read()
         for encoding in ["utf-8-sig", "utf-8", "gbk", "latin-1"]:
@@ -1286,6 +1309,7 @@ async def import_inbound(
 
             raw_inb = RawInbound(
                 country_id=country_obj.id,
+                store_id=store_obj.id if store_obj else None,
                 transaction_date=txn_date_val,
                 inbound_plan_id=str(get_col(row, "入库计划编号") or "").strip(),
                 fba_shipment_id=str(get_col(row, "亚马逊物流货件编号") or "").strip(),
@@ -1324,9 +1348,12 @@ async def import_inbound(
             if not product:
                 continue
 
+            filters = [MonthlySummary.product_id == product.id, MonthlySummary.country_id == country_obj.id]
+            if store_obj:
+                filters.append(MonthlySummary.store_id == store_obj.id)
             summaries = (
                 db.query(MonthlySummary)
-                .filter(MonthlySummary.product_id == product.id)
+                .filter(*filters)
                 .all()
             )
 
@@ -1384,6 +1411,7 @@ async def import_long_term_storage(
         country_obj = db.query(DimCountry).filter(DimCountry.code == country).first()
         if not country_obj:
             return {"detail": f"国家 {country} 不存在"}
+        store_obj = _get_or_default_store(db, store)
 
         content = await file.read()
         for encoding in ["utf-8-sig", "utf-8", "gbk", "latin-1"]:
@@ -1410,6 +1438,7 @@ async def import_long_term_storage(
 
             raw_lts = RawLongTermStorage(
                 country_id=country_obj.id,
+                store_id=store_obj.id if store_obj else None,
                 snapshot_date=str(row.get("snapshot-date", "") or "").strip(),
                 sku=str(row.get("sku", "") or "").strip(),
                 fnsku=str(row.get("fnsku", "") or "").strip(),

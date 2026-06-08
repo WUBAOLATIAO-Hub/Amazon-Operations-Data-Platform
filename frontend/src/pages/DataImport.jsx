@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Select, Tabs, Upload, Card, Alert, Spin, message, Typography, Space, Tag, Button, Collapse } from 'antd'
 import { InboxOutlined, CheckCircleOutlined, CloseCircleOutlined, WarningOutlined } from '@ant-design/icons'
-import { getImportSupported, uploadFile, uploadWorkbook, getStores } from '../api'
+import { getImportSupported, uploadFile, uploadWorkbook, getStores, getCountries } from '../api'
 import axios from 'axios'
 
 const { Dragger } = Upload
@@ -30,6 +30,7 @@ export default function DataImport() {
   const [country, setCountry] = useState('US')
   const [store, setStore] = useState('')
   const [storeOptions, setStoreOptions] = useState([])
+  const [countryOptions, setCountryOptions] = useState([])
   const [importYear, setImportYear] = useState(2026)
   const [importMonth, setImportMonth] = useState(5)
   const [activeTab, setActiveTab] = useState('transactions')
@@ -46,12 +47,17 @@ export default function DataImport() {
   const [supportedInfo, setSupportedInfo] = useState({})
   const [loadingSupported, setLoadingSupported] = useState(false)
 
-  // 获取店铺列表
+  // 获取店铺和国家列表
   useEffect(() => {
     getStores().then(res => {
       const opts = (res.data || []).map(s => ({ value: s.code, label: s.name }))
       setStoreOptions(opts)
       if (opts.length > 0 && !store) setStore(opts[0].value)
+    }).catch(() => {})
+    getCountries().then(res => {
+      const opts = (res.data || []).map(c => ({ value: c.code, label: c.name }))
+      setCountryOptions(opts)
+      if (opts.length > 0 && !country) setCountry(opts[0].value)
     }).catch(() => {})
   }, [])
 
