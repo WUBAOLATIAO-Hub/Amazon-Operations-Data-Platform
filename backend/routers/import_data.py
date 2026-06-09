@@ -406,6 +406,7 @@ async def import_transaction(
             # 西班牙语类型转英文
             if txn_type.lower() == 'pedido': txn_type = 'Order'
             elif txn_type.lower() == 'reembolso': txn_type = 'Refund'
+            elif txn_type.lower() == 'ajuste': txn_type = 'Adjustment'
             type_counts[txn_type] = type_counts.get(txn_type, 0) + 1
 
             sku = mapped.get("sku", "").strip()
