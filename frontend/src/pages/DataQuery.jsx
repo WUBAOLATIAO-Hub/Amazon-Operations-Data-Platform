@@ -101,13 +101,13 @@ export default function DataQuery() {
     }).catch(() => {})
   }, [])
 
-  // 店铺/年/月变化时自动查询
+  // 筛选条件变化时自动查询
   useEffect(() => {
     if (store) {
       fetchData(1, pagination.pageSize, sorter.field, sorter.order)
       fetchCountrySummary()
     }
-  }, [store, year, month])
+  }, [store, country, year, month])
 
   const handleSearch = () => {
     fetchData(1, pagination.pageSize, sorter.field, sorter.order)
@@ -120,10 +120,7 @@ export default function DataQuery() {
     setYear(2026)
     setMonth(0)
     keywordRef.current = ''
-    setTimeout(() => {
-      fetchData(1, 50)
-      fetchCountrySummary()
-    }, 50)
+    // useEffect 会自动触发查询
   }
 
   const handleTableChange = (pag, _, newSorter) => {
@@ -131,10 +128,9 @@ export default function DataQuery() {
     fetchData(pag.current, pag.pageSize, newSorter.field, newSorter.order)
   }
 
-  // 点击国家行 → 筛选该国家
+  // 点击国家行 → 筛选该国家（useEffect 会自动触发查询）
   const handleCountryRow = (countryCode) => {
     setCountry(countryCode)
-    setTimeout(() => fetchData(1, pagination.pageSize, sorter.field, sorter.order), 50)
   }
 
   // 国家汇总表列
@@ -194,7 +190,7 @@ export default function DataQuery() {
       <Card size="small" style={{ marginBottom: 12 }}>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           <Select style={{ width: 160 }} value={store} onChange={setStore} options={storeOptions} placeholder="选择店铺" showSearch />
-          <Select style={{ width: 140 }} value={country} onChange={v => { setCountry(v); setTimeout(() => fetchData(1, pagination.pageSize), 50) }} options={countryOptions} />
+          <Select style={{ width: 140 }} value={country} onChange={setCountry} options={countryOptions} />
           <Select style={{ width: 110 }} value={year} onChange={setYear} options={YEAR_OPTIONS} />
           <Select style={{ width: 100 }} value={month} onChange={setMonth} options={MONTH_OPTIONS} />
           <Input placeholder="ASIN或产品名称" allowClear style={{ width: 200 }} value={keyword} onChange={e => setKeyword(e.target.value)} onPressEnter={handleSearch} />
@@ -261,7 +257,7 @@ export default function DataQuery() {
       {/* 产品明细表 */}
       <Card
         size="small"
-        title={<span>产品明细 {country && <Tag color="blue" closable onClose={() => { setCountry(''); setTimeout(() => fetchData(1, pagination.pageSize), 50) }}>{country}</Tag>}</span>}
+        title={<span>产品明细 {country && <Tag color="blue" closable onClose={() => setCountry('')}>{country}</Tag>}</span>}
         extra={
           <Segmented
             size="small"
