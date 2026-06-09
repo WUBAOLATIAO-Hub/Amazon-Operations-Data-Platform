@@ -583,17 +583,63 @@ def import_sales():
 
 
 def parse_date(date_str):
-    """解析各种格式的日期字符串"""
+    """解析各种格式的日期字符串（含法/意/荷/瑞/西/德语月份）"""
     if not date_str or date_str == "nan" or date_str == "NaT":
         return None
     date_str = date_str.strip()
 
+    # 非英语月份名 → 英语月份名
+    MONTH_MAP = {
+        # 法语
+        "janvier": "January", "février": "February", "mars": "March",
+        "avril": "April", "mai": "May", "juin": "June",
+        "juillet": "July", "août": "August", "septembre": "September",
+        "octobre": "October", "novembre": "November", "décembre": "December",
+        # 意大利语
+        "gennaio": "January", "febbraio": "February", "marzo": "March",
+        "aprile": "April", "maggio": "May", "giugno": "June",
+        "luglio": "July", "agosto": "August", "settembre": "September",
+        "ottobre": "October", "novembre": "November", "dicembre": "December",
+        "gen": "Jan", "feb": "Feb", "mag": "May", "giu": "Jun",
+        "lug": "Jul", "ago": "Aug", "set": "Sep", "ott": "Oct", "dic": "Dec",
+        # 荷兰语
+        "januari": "January", "februari": "February", "maart": "March",
+        "april": "April", "mei": "May", "juni": "June",
+        "juli": "July", "augustus": "August", "september": "September",
+        "oktober": "October", "november": "November", "december": "December",
+        # 瑞典语
+        "januari": "January", "februari": "February", "mars": "March",
+        "april": "April", "maj": "May", "juni": "June",
+        "juli": "July", "augusti": "August", "september": "September",
+        "oktober": "October", "november": "November", "december": "December",
+        # 德语
+        "januar": "January", "februar": "February", "märz": "March",
+        "april": "April", "mai": "May", "juni": "June",
+        "juli": "July", "august": "August", "september": "September",
+        "oktober": "October", "november": "November", "dezember": "December",
+        # 西班牙语
+        "enero": "January", "febrero": "February", "marzo": "March",
+        "abril": "April", "mayo": "May", "junio": "June",
+        "julio": "July", "agosto": "August", "septiembre": "September",
+        "octubre": "October", "noviembre": "November", "diciembre": "December",
+    }
+
+    # 替换非英语月份
+    lower = date_str.lower()
+    for local, eng in MONTH_MAP.items():
+        if local in lower:
+            date_str = date_str.replace(local, eng)
+            # 也处理首字母大写
+            date_str = date_str.replace(local.capitalize(), eng)
+            break
+
     # 常见格式
     formats = [
         "%d %b %Y %H:%M:%S UTC",       # "1 May 2026 00:09:17 UTC"
+        "%d %B %Y %H:%M:%S UTC",        # "2 May 2026 03:04:42 UTC"
         "%d %b %Y %I:%M:%S %p UTC",     # "12 May 2026 4:26:48 AM UTC"
+        "%d %B %Y %I:%M:%S %p UTC",     # "12 May 2026 4:26:48 AM UTC"
         "%d.%m.%Y %H:%M:%S UTC",        # "01.05.2026 10:05:35 UTC"
-        "%d %b %Y %H:%M:%S UTC",        # "2 mai 2026 03:04:42 UTC"
         "%Y-%m-%dT%H:%M:%S%z",          # ISO 8601
     ]
     for fmt in formats:
