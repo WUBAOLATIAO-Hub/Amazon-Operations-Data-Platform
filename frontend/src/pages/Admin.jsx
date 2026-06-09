@@ -87,6 +87,10 @@ function RateManager() {
   for (const k of Object.keys(grouped)) {
     grouped[k].sort((a,b) => b.year_month.localeCompare(a.year_month))
   }
+  // 确保所有国家都显示（包括还没有汇率的）
+  for (const c of countries) {
+    if (!grouped[c.code]) grouped[c.code] = []
+  }
 
   return (
     <div>
@@ -95,6 +99,7 @@ function RateManager() {
         const countryInfo = countries.find(c=>c.code===cc)
         return (
           <Card key={cc} size="small" title={<span><GlobalOutlined style={{marginRight:8}}/>{cc} {countryInfo?.name||''}</span>} style={{marginBottom:12}}>
+            {grouped[cc].length > 0 ? (
             <Table rowKey="id" size="small" dataSource={grouped[cc]} pagination={false} showHeader={false}
               columns={[
                 {title:'年月',dataIndex:'year_month',width:120,render:v=><strong>{v}</strong>},
@@ -104,6 +109,7 @@ function RateManager() {
                    <Popconfirm title="确定删除？" onConfirm={async()=>{await api.delete(`/admin/exchange-rates/${r.id}`);fetch()}}><Button danger size="small" icon={<DeleteOutlined/>}/></Popconfirm>
                  </Space>)}
               ]}/>
+            ) : <div style={{color:'#999',padding:'8px 0'}}>暂无汇率，点击上方"添加汇率"为该国家添加</div>}
           </Card>
         )
       })}

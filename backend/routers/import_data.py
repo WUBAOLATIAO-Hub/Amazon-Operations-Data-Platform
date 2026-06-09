@@ -108,7 +108,7 @@ def _find_time_by_month_str(db: Session, month_str: str):
 
 def _get_or_create_product(db: Session, asin: str, sku: str = None) -> DimProduct:
     asin = asin.strip() if asin else ""
-    if not asin or asin.startswith("Amazon."):
+    if not asin or asin.startswith("Amazon.") or asin.startswith("amzn.gr."):
         return None
     product = db.query(DimProduct).filter(DimProduct.asin == asin).first()
     if not product:
@@ -383,6 +383,7 @@ async def import_transaction(
 
         # 按 SKU 聚合用于 monthly_summary（仅 Order/Refund）
         sku_aggregation = {}  # key: (sku, year, month) -> dict
+        adj_aggregation = {}  # key: (sku, year, month) -> {"total": Decimal, "qty": int}
         row_count = 0
         type_counts = {}
 
@@ -459,6 +460,17 @@ async def import_transaction(
             db.add(raw)
             row_count += 1
 
+            # Adjustment 处理：单独聚合
+            if txn_type == "Adjustment":
+                adj_key = (effective_sku, txn_date.year, txn_date.month)
+                if adj_key not in adj_aggregation:
+                    adj_aggregation[adj_key] = {"total": Decimal("0"), "qty": 0}
+                adj_aggregation[adj_key]["total"] += total
+                order_id_val = mapped.get("order_id", "")
+                if not order_id_val or not str(order_id_val).strip():
+                    adj_aggregation[adj_key]["qty"] += (1 if total > 0 else -1 if total < 0 else 0)
+                continue
+
             # 仅 Order/Refund 参与 monthly_summary 聚合
             if txn_type not in ("Order", "Refund"):
                 continue
@@ -474,13 +486,21 @@ async def import_transaction(
                     "order_count": 0,
                     "quantity": 0,
                     "order_qty": 0,
+                    "promo_rebate": Decimal("0"),
+                    "promo_rebate_tax": Decimal("0"),
+                    "marketplace_withheld_tax": Decimal("0"),
                 }
             agg = sku_aggregation[key]
-            # 总收入 = product_sales + shipping_credits + promotional_rebates + gift_wrap_credits
+            # 总收入 = product_sales + shipping_credits + gift_wrap_credits（不含 promotional_rebates）
             shipping = _safe_decimal(mapped.get("shipping_credits"))
             promo = _safe_decimal(mapped.get("promotional_rebates"))
+            promo_tax = _safe_decimal(mapped.get("promotional_rebates_tax"))
+            mkt_tax = _safe_decimal(mapped.get("marketplace_withheld_tax"))
             gift = _safe_decimal(mapped.get("gift_wrap_credits"))
-            agg["product_sales"] += product_sales + shipping + promo + gift
+            agg["product_sales"] += product_sales + shipping + gift
+            agg["promo_rebate"] += promo
+            agg["promo_rebate_tax"] += promo_tax
+            agg["marketplace_withheld_tax"] += mkt_tax
             agg["selling_fee"] += selling_fee
             agg["fba_fee"] += fba_fee
             agg["order_count"] += 1
@@ -511,6 +531,9 @@ async def import_transaction(
             summary.product_sales_usd = agg["product_sales"]
             summary.commission_usd = agg["selling_fee"]
             summary.fba_fee_usd = agg["fba_fee"]
+            summary.promo_rebate_usd = agg["promo_rebate"]
+            summary.promo_rebate_tax_usd = agg["promo_rebate_tax"]
+            summary.marketplace_withheld_tax_usd = agg["marketplace_withheld_tax"]
             summary.exchange_rate = exchange_rate
             summary.product_sales_rmb = (agg["product_sales"] * exchange_rate).quantize(Decimal("0.01"))
             summary.order_count = agg["quantity"]  # 净销量用于显示
@@ -541,6 +564,8 @@ async def import_transaction(
                 - Decimal(str(summary.storage_fee_usd or 0)) * exchange_rate
                 - Decimal(str(summary.returns_fee_usd or 0)) * exchange_rate
                 - Decimal(str(summary.inbound_fee_usd or 0)) * exchange_rate
+
+
             ).quantize(Decimal("0.01"))
 
             summary.net_profit_rmb = net
@@ -548,6 +573,45 @@ async def import_transaction(
                 summary.net_profit_rate = (net / summary.product_sales_rmb).quantize(Decimal("0.0001"))
 
             summary_count += 1
+
+        # 处理 Adjustment
+        for (sku, adj_year, adj_month), adj_agg in adj_aggregation.items():
+            product = _find_product_by_sku(db, sku)
+            if not product:
+                asin = sku.split("-")[0] if sku and "-" in sku else sku
+                product = _get_or_create_product(db, asin, sku)
+            if not product:
+                continue
+            time_obj = _get_or_create_time(db, adj_year, adj_month)
+            exchange_rate = _get_exchange_rate(db, country_obj, adj_year, adj_month)
+            summary = _get_or_create_monthly_summary(db, country_obj.id, product.id, time_obj.id, store_id=store_obj.id)
+            summary.adjustment_usd = (summary.adjustment_usd or Decimal("0")) + adj_agg["total"]
+            # 无 order_id 的 Adjustment：调整 order_qty 和成本
+            if adj_agg["qty"] != 0:
+                summary.order_qty = (summary.order_qty or 0) + adj_agg["qty"]
+                pc = db.query(DimProductCost).filter(DimProductCost.product_id == product.id, DimProductCost.year_month == f"{adj_year}-{adj_month:02d}").first()
+                if not pc:
+                    pc = db.query(DimProductCost).filter(DimProductCost.product_id == product.id).first()
+                if pc:
+                    summary.product_cost_rmb = (Decimal(str(pc.cost_rmb or 0)) * summary.order_qty).quantize(Decimal("0.01"))
+                    summary.freight_cost_rmb = (Decimal(str(pc.freight_per_unit or 0)) * summary.order_qty).quantize(Decimal("0.01"))
+            # 重算净利润
+            er = exchange_rate
+            net = (
+                Decimal(str(summary.product_sales_rmb or 0))
+                + Decimal(str(summary.commission_usd or 0)) * er
+                + Decimal(str(summary.fba_fee_usd or 0)) * er
+                + Decimal(str(summary.adjustment_usd or 0)) * er
+                - Decimal(str(summary.product_cost_rmb or 0))
+                - Decimal(str(summary.freight_cost_rmb or 0))
+                - Decimal(str(summary.ad_spend_usd or 0)) * er
+                - Decimal(str(summary.storage_fee_usd or 0)) * er
+                - Decimal(str(summary.returns_fee_usd or 0)) * er
+                - Decimal(str(summary.inbound_fee_usd or 0)) * er
+            ).quantize(Decimal("0.01"))
+            summary.net_profit_rmb = net
+            if summary.product_sales_rmb and summary.product_sales_rmb != 0:
+                summary.net_profit_rate = (net / summary.product_sales_rmb).quantize(Decimal("0.0001"))
 
         # 补建有成本但无交易的产品summary
         _ensure_all_products_have_summary(db, country_obj)
@@ -879,6 +943,10 @@ async def import_advertising(
                     - Decimal(str(summary.storage_fee_usd or 0)) * exchange_rate
                     - Decimal(str(summary.returns_fee_usd or 0)) * exchange_rate
                     - Decimal(str(summary.inbound_fee_usd or 0)) * exchange_rate
+                    - Decimal(str(summary.promo_rebate_usd or 0)) * exchange_rate
+                    - Decimal(str(summary.promo_rebate_tax_usd or 0)) * exchange_rate
+    
+
                 ).quantize(Decimal("0.01"))
 
                 summary.net_profit_rmb = net
@@ -1065,6 +1133,10 @@ async def import_storage(
                     - total_fee * exchange_rate
                     - Decimal(str(summary.returns_fee_usd or 0)) * exchange_rate
                     - Decimal(str(summary.inbound_fee_usd or 0)) * exchange_rate
+                    - Decimal(str(summary.promo_rebate_usd or 0)) * exchange_rate
+                    - Decimal(str(summary.promo_rebate_tax_usd or 0)) * exchange_rate
+    
+
                 ).quantize(Decimal("0.01"))
 
                 summary.net_profit_rmb = net
@@ -1218,6 +1290,10 @@ async def import_returns(
                     - Decimal(str(summary.storage_fee_usd or 0)) * exchange_rate
                     - total_fee * exchange_rate
                     - Decimal(str(summary.inbound_fee_usd or 0)) * exchange_rate
+                    - Decimal(str(summary.promo_rebate_usd or 0)) * exchange_rate
+                    - Decimal(str(summary.promo_rebate_tax_usd or 0)) * exchange_rate
+    
+
                 ).quantize(Decimal("0.01"))
 
                 summary.net_profit_rmb = net
@@ -1375,6 +1451,10 @@ async def import_inbound(
                     - Decimal(str(summary.storage_fee_usd or 0)) * exchange_rate
                     - Decimal(str(summary.returns_fee_usd or 0)) * exchange_rate
                     - total_fee * exchange_rate
+                    - Decimal(str(summary.promo_rebate_usd or 0)) * exchange_rate
+                    - Decimal(str(summary.promo_rebate_tax_usd or 0)) * exchange_rate
+    
+
                 ).quantize(Decimal("0.01"))
 
                 summary.net_profit_rmb = net
@@ -1686,6 +1766,7 @@ def _process_csv_file(db, country_obj, store_id, filename, lines, import_year=No
         raw_count = 0
         summary_count = 0
         sku_agg = {}
+        adj_agg2 = {}  # Adjustment aggregation for Path 2
         rate = _get_exchange_rate(db, country_obj, import_year, import_month)
         
         for row in rows:
@@ -1693,7 +1774,19 @@ def _process_csv_file(db, country_obj, store_id, filename, lines, import_year=No
             txn_type = row.get('type', '').strip()
             if txn_type.lower() in ('pedido',): txn_type = 'Order'
             elif txn_type.lower() in ('reembolso',): txn_type = 'Refund'
-            
+            elif txn_type.lower() in ('ajuste',): txn_type = 'Adjustment'
+
+            # Adjustment 处理
+            if txn_type == 'Adjustment':
+                adj_key = (effective_sku, year, month)
+                if adj_key not in adj_agg2:
+                    adj_agg2[adj_key] = {'total': Decimal('0'), 'qty': 0}
+                adj_agg2[adj_key]['total'] += _safe_decimal(row.get('total'))
+                order_id_val = row.get('order id', '')
+                if not order_id_val or not str(order_id_val).strip():
+                    adj_agg2[adj_key]['qty'] += (1 if _safe_decimal(row.get('total')) > 0 else -1 if _safe_decimal(row.get('total')) < 0 else 0)
+                continue
+
             if txn_type not in ('Order', 'Refund'): continue
             
             # Parse date
@@ -1708,6 +1801,8 @@ def _process_csv_file(db, country_obj, store_id, filename, lines, import_year=No
             qty = _safe_int(row.get('quantity'))
             ship = _safe_decimal(row.get('shipping credits'))
             promo = _safe_decimal(row.get('promotional rebates'))
+            promo_tax = _safe_decimal(row.get('promotional rebates tax'))
+            mkt_tax = _safe_decimal(row.get('marketplace withheld tax'))
             gift = _safe_decimal(row.get('gift wrap credits'))
             
             year = import_year if import_year else (txn_date.year if txn_date else 2026)
@@ -1719,19 +1814,23 @@ def _process_csv_file(db, country_obj, store_id, filename, lines, import_year=No
                 sku=sku, description=row.get('description','')[:200],
                 quantity=qty, product_sales=ps, selling_fee=sf, fba_fee=ff,
                 shipping_credits=ship, promotional_rebates=promo, gift_wrap_credits=gift,
+                promotional_rebates_tax=promo_tax, marketplace_withheld_tax=mkt_tax,
             )
             db.add(raw); raw_count += 1
-            
+
             # amzn.gr handling
             real_sku = _extract_real_sku(sku) if sku.startswith('amzn.gr.') else None
             effective_sku = real_sku or sku
             is_replacement = bool(real_sku)
-            
+
             key = (effective_sku, year, month)
             if key not in sku_agg:
-                sku_agg[key] = {'ps': Decimal('0'), 'sf': Decimal('0'), 'ff': Decimal('0'), 'qty': 0, 'oqty': 0, 'ship': Decimal('0'), 'promo': Decimal('0'), 'gift': Decimal('0')}
+                sku_agg[key] = {'ps': Decimal('0'), 'sf': Decimal('0'), 'ff': Decimal('0'), 'qty': 0, 'oqty': 0, 'ship': Decimal('0'), 'promo': Decimal('0'), 'promo_tax': Decimal('0'), 'mkt_tax': Decimal('0'), 'gift': Decimal('0')}
             a = sku_agg[key]
-            a['ps'] += ps + ship + promo + gift
+            a['ps'] += ps + ship + gift  # 不含 promo
+            a['promo'] += promo
+            a['promo_tax'] += promo_tax
+            a['mkt_tax'] += mkt_tax
             a['sf'] += sf; a['ff'] += ff
             if txn_type == 'Refund': a['qty'] -= abs(qty)
             else:
@@ -1755,6 +1854,7 @@ def _process_csv_file(db, country_obj, store_id, filename, lines, import_year=No
                 db.add(ms)
             
             ms.product_sales_usd = a['ps']; ms.commission_usd = a['sf']; ms.fba_fee_usd = a['ff']
+            ms.promo_rebate_usd = a['promo']; ms.promo_rebate_tax_usd = a['promo_tax']; ms.marketplace_withheld_tax_usd = a['mkt_tax']
             ms.order_count = a['qty']; ms.order_qty = a['oqty']
             ms.exchange_rate = rate
             ms.product_sales_rmb = (a['ps'] * rate).quantize(Decimal('0.01'))
@@ -1767,7 +1867,50 @@ def _process_csv_file(db, country_obj, store_id, filename, lines, import_year=No
             ms.product_cost_rmb = (unit_cost * a['oqty']).quantize(Decimal('0.01'))
             ms.freight_cost_rmb = (unit_freight * a['oqty']).quantize(Decimal('0.01'))
             summary_count += 1
-        
+
+        # 处理 Adjustment
+        for (adj_sku, adj_year, adj_month), adj in adj_agg2.items():
+            product = _find_product_by_sku(db, adj_sku)
+            if not product:
+                asin = adj_sku.split('-')[0] if '-' in adj_sku else adj_sku
+                product = _get_or_create_product(db, asin, adj_sku)
+            if not product: continue
+            time_obj = _get_or_create_time(db, adj_year, adj_month)
+            ms = db.query(MonthlySummary).filter(
+                MonthlySummary.country_id==country_obj.id, MonthlySummary.product_id==product.id,
+                MonthlySummary.time_id==time_obj.id, MonthlySummary.store_id==store_id
+            ).first()
+            if not ms:
+                ms = MonthlySummary(country_id=country_obj.id, product_id=product.id, time_id=time_obj.id, store_id=store_id)
+                db.add(ms)
+            ms.adjustment_usd = (ms.adjustment_usd or Decimal('0')) + adj['total']
+            if adj['qty'] != 0:
+                ms.order_qty = (ms.order_qty or 0) + adj['qty']
+                ym_str = f'{adj_year}-{adj_month:02d}'
+                pc = db.query(DimProductCost).filter(DimProductCost.product_id==product.id, DimProductCost.year_month==ym_str).first()
+                if not pc: pc = db.query(DimProductCost).filter(DimProductCost.product_id==product.id).first()
+                if pc:
+                    ms.product_cost_rmb = (Decimal(str(pc.cost_rmb or 0)) * ms.order_qty).quantize(Decimal('0.01'))
+                    ms.freight_cost_rmb = (Decimal(str(pc.freight_per_unit or 0)) * ms.order_qty).quantize(Decimal('0.01'))
+            # 重算净利润
+            er = rate
+            net = (
+                Decimal(str(ms.product_sales_rmb or 0))
+                + Decimal(str(ms.commission_usd or 0)) * er
+                + Decimal(str(ms.fba_fee_usd or 0)) * er
+                + Decimal(str(ms.adjustment_usd or 0)) * er
+                - Decimal(str(ms.product_cost_rmb or 0))
+                - Decimal(str(ms.freight_cost_rmb or 0))
+                - Decimal(str(ms.ad_spend_usd or 0)) * er
+                - Decimal(str(ms.storage_fee_usd or 0)) * er
+                - Decimal(str(ms.returns_fee_usd or 0)) * er
+                - Decimal(str(ms.inbound_fee_usd or 0)) * er
+            ).quantize(Decimal('0.01'))
+            ms.net_profit_rmb = net
+            if ms.product_sales_rmb and ms.product_sales_rmb != 0:
+                ms.net_profit_rate = (net / ms.product_sales_rmb).quantize(Decimal('0.0001'))
+            summary_count += 1
+
         return f'txn:{raw_count} s:{summary_count}'
     
     # === ADVERTISING ===
@@ -2076,6 +2219,7 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
         return {"raw_rows": 0, "summary_rows": 0, "error": "缺少必要列"}
 
     sku_aggregation = {}
+    adj_aggregation3 = {}  # Adjustment aggregation for Path 3
     raw_count = 0
     exchange_rate = _get_exchange_rate(db, country_obj, import_year, import_month)
 
@@ -2177,6 +2321,19 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
         db.add(raw)
         raw_count += 1
 
+        # Adjustment 处理
+        if txn_type == "Adjustment":
+            year = import_year if import_year else txn_date.year
+            month = import_month if import_month else txn_date.month
+            adj_key = (effective_sku, year, month)
+            if adj_key not in adj_aggregation3:
+                adj_aggregation3[adj_key] = {"total": Decimal("0"), "qty": 0}
+            adj_aggregation3[adj_key]["total"] += total
+            order_id_val = row[col_order] if col_order is not None else ""
+            if not order_id_val or not str(order_id_val).strip():
+                adj_aggregation3[adj_key]["qty"] += (1 if total > 0 else -1 if total < 0 else 0)
+            continue
+
         # 仅 Order/Refund 参与 monthly_summary 聚合
         if txn_type not in ("Order", "Refund"):
             continue
@@ -2185,14 +2342,19 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
         month = import_month if import_month else txn_date.month
         key = (effective_sku, year, month)
         if key not in sku_aggregation:
-            sku_aggregation[key] = {"product_sales": Decimal("0"), "selling_fee": Decimal("0"), "fba_fee": Decimal("0"), "quantity": 0, "order_qty": 0}
+            sku_aggregation[key] = {"product_sales": Decimal("0"), "selling_fee": Decimal("0"), "fba_fee": Decimal("0"), "quantity": 0, "order_qty": 0, "promo_rebate": Decimal("0"), "promo_rebate_tax": Decimal("0"), "marketplace_withheld_tax": Decimal("0")}
         agg = sku_aggregation[key]
-        # 总收入 = product_sales + shipping_credits + promotional_rebates + gift_wrap_credits
+        # 总收入 = product_sales + shipping_credits + gift_wrap_credits（不含 promotional_rebates）
         shipping = _safe_decimal(row[col_ship_credit] if col_ship_credit is not None else 0)
         promo = _safe_decimal(row[col_promo] if col_promo is not None else 0)
+        promo_tax = _safe_decimal(row[col_promo_tax] if col_promo_tax is not None else 0)
+        mkt_tax = _safe_decimal(row[col_mkt_tax] if col_mkt_tax is not None else 0)
         gift = _safe_decimal(row[col_gift] if col_gift is not None else 0)
-        total_revenue = product_sales + shipping + promo + gift
+        total_revenue = product_sales + shipping + gift
         agg["product_sales"] += total_revenue
+        agg["promo_rebate"] += promo
+        agg["promo_rebate_tax"] += promo_tax
+        agg["marketplace_withheld_tax"] += mkt_tax
         agg["selling_fee"] += selling_fee
         agg["fba_fee"] += fba_fee
         # Refund 数量为负（净销量）
@@ -2220,6 +2382,9 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
         summary.product_sales_usd = agg["product_sales"]
         summary.commission_usd = agg["selling_fee"]
         summary.fba_fee_usd = agg["fba_fee"]
+        summary.promo_rebate_usd = agg["promo_rebate"]
+        summary.promo_rebate_tax_usd = agg["promo_rebate_tax"]
+        summary.marketplace_withheld_tax_usd = agg["marketplace_withheld_tax"]
         summary.exchange_rate = exchange_rate
         summary.product_sales_rmb = (agg["product_sales"] * exchange_rate).quantize(Decimal("0.01"))
         summary.order_count = agg["quantity"]  # 净销量用于显示
@@ -2237,6 +2402,44 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
         freight_rmb = (unit_freight * agg["order_qty"]).quantize(Decimal("0.01"))
         summary.product_cost_rmb = cost_rmb
         summary.freight_cost_rmb = freight_rmb
+        summary_count += 1
+
+    # 处理 Adjustment
+    for (adj_sku, adj_year, adj_month), adj_agg in adj_aggregation3.items():
+        product = _find_product_by_sku(db, adj_sku)
+        if not product:
+            asin = adj_sku.split("-")[0] if adj_sku and "-" in adj_sku else adj_sku
+            product = _get_or_create_product(db, asin, adj_sku)
+        if not product:
+            continue
+        time_obj = _get_or_create_time(db, adj_year, adj_month)
+        summary = _get_or_create_monthly_summary(db, country_obj.id, product.id, time_obj.id, store_id=store_id)
+        summary.adjustment_usd = (summary.adjustment_usd or Decimal("0")) + adj_agg["total"]
+        if adj_agg["qty"] != 0:
+            summary.order_qty = (summary.order_qty or 0) + adj_agg["qty"]
+            pc = db.query(DimProductCost).filter(DimProductCost.product_id == product.id, DimProductCost.year_month == f"{adj_year}-{adj_month:02d}").first()
+            if not pc:
+                pc = db.query(DimProductCost).filter(DimProductCost.product_id == product.id).first()
+            if pc:
+                summary.product_cost_rmb = (Decimal(str(pc.cost_rmb or 0)) * summary.order_qty).quantize(Decimal("0.01"))
+                summary.freight_cost_rmb = (Decimal(str(pc.freight_per_unit or 0)) * summary.order_qty).quantize(Decimal("0.01"))
+        # 重算净利润
+        er = exchange_rate
+        net = (
+            Decimal(str(summary.product_sales_rmb or 0))
+            + Decimal(str(summary.commission_usd or 0)) * er
+            + Decimal(str(summary.fba_fee_usd or 0)) * er
+            + Decimal(str(summary.adjustment_usd or 0)) * er
+            - Decimal(str(summary.product_cost_rmb or 0))
+            - Decimal(str(summary.freight_cost_rmb or 0))
+            - Decimal(str(summary.ad_spend_usd or 0)) * er
+            - Decimal(str(summary.storage_fee_usd or 0)) * er
+            - Decimal(str(summary.returns_fee_usd or 0)) * er
+            - Decimal(str(summary.inbound_fee_usd or 0)) * er
+        ).quantize(Decimal("0.01"))
+        summary.net_profit_rmb = net
+        if summary.product_sales_rmb and summary.product_sales_rmb != 0:
+            summary.net_profit_rate = (net / summary.product_sales_rmb).quantize(Decimal("0.0001"))
         summary_count += 1
 
     return {"raw_rows": raw_count, "summary_rows": summary_count}
@@ -2788,6 +2991,7 @@ def _recalculate_all_profit(db, country_obj):
             summary.product_sales_rmb
             + Decimal(str(summary.commission_usd or 0)) * er
             + Decimal(str(summary.fba_fee_usd or 0)) * er
+            + Decimal(str(summary.adjustment_usd or 0)) * er
             - summary.product_cost_rmb
             - summary.freight_cost_rmb
             - Decimal(str(summary.ad_spend_usd or 0)) * er

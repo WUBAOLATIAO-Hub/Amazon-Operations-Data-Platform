@@ -121,28 +121,47 @@ def list_rates(country_id: int = None, year_month: str = None, db: Session = Dep
 
 @app.post("/api/admin/exchange-rates")
 def create_rate(country_id: int, year_month: str, rate: float, db: Session = Depends(get_db)):
-    from models import DimExchangeRate
+    from models import DimExchangeRate, DimCountry
     r = DimExchangeRate(country_id=country_id, year_month=year_month, rate=rate)
     db.add(r)
     db.commit()
+    # 汇率变更后重算该国家所有月份利润
+    country_obj = db.query(DimCountry).filter(DimCountry.id == country_id).first()
+    if country_obj:
+        from routers.import_data import _recalculate_all_profit
+        _recalculate_all_profit(db, country_obj)
+        db.commit()
     return {"id": r.id, "year_month": r.year_month, "rate": float(r.rate)}
 
 @app.delete("/api/admin/exchange-rates/{rate_id}")
 def delete_rate(rate_id: int, db: Session = Depends(get_db)):
-    from models import DimExchangeRate
+    from models import DimExchangeRate, DimCountry
     r = db.query(DimExchangeRate).filter(DimExchangeRate.id == rate_id).first()
     if not r: return {"detail": "不存在"}
+    country_id = r.country_id
     db.delete(r)
     db.commit()
+    # 汇率删除后重算该国家所有月份利润
+    country_obj = db.query(DimCountry).filter(DimCountry.id == country_id).first()
+    if country_obj:
+        from routers.import_data import _recalculate_all_profit
+        _recalculate_all_profit(db, country_obj)
+        db.commit()
     return {"message": "已删除"}
 
 @app.put("/api/admin/exchange-rates/{rate_id}")
 def update_rate(rate_id: int, rate: float, db: Session = Depends(get_db)):
-    from models import DimExchangeRate
+    from models import DimExchangeRate, DimCountry
     r = db.query(DimExchangeRate).filter(DimExchangeRate.id == rate_id).first()
     if not r: return {"detail": "不存在"}
     r.rate = rate
     db.commit()
+    # 汇率变更后重算该国家所有月份利润
+    country_obj = db.query(DimCountry).filter(DimCountry.id == r.country_id).first()
+    if country_obj:
+        from routers.import_data import _recalculate_all_profit
+        _recalculate_all_profit(db, country_obj)
+        db.commit()
     return {"id": r.id, "rate": float(r.rate)}
 
 def _get_exchange_rate(db: Session, country_id: int, year_month: str) -> float:
