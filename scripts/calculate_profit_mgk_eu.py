@@ -40,21 +40,7 @@ DB_CONFIG = {
 }
 
 STORE_CODE = "MGK-EU"
-
-# 汇率配置（与 dim_country 保持一致）
-EXCHANGE_RATES = {
-    "UK": Decimal("9.23"),
-    "DE": Decimal("7.62"),
-    "FR": Decimal("7.62"),
-    "ES": Decimal("7.62"),
-    "IT": Decimal("7.62"),
-    "NL": Decimal("7.62"),
-    "SE": Decimal("0.65"),
-    "BE": Decimal("7.62"),
-    "IE": Decimal("7.62"),
-    "AE": Decimal("1.86"),
-    "SA": Decimal("1.81"),
-}
+EXCHANGE_MONTH = "2026-05"  # 默认汇率月份
 
 
 def get_db():
@@ -95,11 +81,15 @@ def calculate_by_product_country_month():
     for row in cursor.fetchall():
         freight_map[row["product_id"]][row["country_code"]] = Decimal(str(row["freight_rmb"]))
 
-    # 3. 获取 country_id → code 映射
-    cursor.execute("SELECT id, code, exchange_rate FROM dim_country")
+    # 3. 获取国家 + 汇率映射
+    cursor.execute("""
+        SELECT dc.id, dc.code, COALESCE(der.rate, 0) as rate
+        FROM dim_country dc
+        LEFT JOIN dim_exchange_rate der ON der.country_id = dc.id AND der.year_month = %s
+    """, (EXCHANGE_MONTH,))
     country_map = {}
     for row in cursor.fetchall():
-        country_map[row["id"]] = {"code": row["code"], "rate": Decimal(str(row["exchange_rate"]))}
+        country_map[row["id"]] = {"code": row["code"], "rate": Decimal(str(row["rate"]))}
 
     # 4. 获取广告费：按 ASIN × 国家汇总
     cursor.execute("""
@@ -200,8 +190,12 @@ def calculate_by_product_country_month():
         if quantity <= 0:
             continue
 
-        # 汇率
-        rate = EXCHANGE_RATES.get(country_code, Decimal("1"))
+        # 汇率（从数据库读取）
+        rate = Decimal("1")
+        for cid, cinfo in country_map.items():
+            if cinfo["code"] == country_code:
+                rate = cinfo["rate"]
+                break
 
         # 交易金额（外币）
         product_sales = Decimal(str(row["sum_product_sales"] or 0))
