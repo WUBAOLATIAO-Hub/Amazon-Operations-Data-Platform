@@ -69,10 +69,13 @@ def calculate_by_product_country_month():
     conn = get_db()
     cursor = conn.cursor(dictionary=True)
 
-    # 1. 获取 SKU → ASIN 映射 + 成本
+    # 1. 获取 SKU → ASIN 映射 + 成本（按店铺过滤）
     cursor.execute("""
-        SELECT id, asin, sku, cost_rmb FROM dim_product
-    """)
+        SELECT dp.id, dp.asin, dp.sku, dp.cost_rmb
+        FROM dim_product dp
+        JOIN dim_store ds ON dp.store_id = ds.id
+        WHERE ds.store_code = %s
+    """, (STORE_CODE,))
     products = {}
     sku_to_product = {}
     for row in cursor.fetchall():
@@ -80,12 +83,14 @@ def calculate_by_product_country_month():
         if row["sku"]:
             sku_to_product[row["sku"]] = row
 
-    # 2. 获取运费映射: product_id → {country_id: freight_rmb}
+    # 2. 获取运费映射: product_id → {country_id: freight_rmb}（按店铺过滤）
     cursor.execute("""
         SELECT df.product_id, df.country_id, df.freight_rmb, dc.code as country_code
         FROM dim_freight df
         JOIN dim_country dc ON df.country_id = dc.id
-    """)
+        JOIN dim_store ds ON df.store_id = ds.id
+        WHERE ds.store_code = %s
+    """, (STORE_CODE,))
     freight_map = defaultdict(dict)
     for row in cursor.fetchall():
         freight_map[row["product_id"]][row["country_code"]] = Decimal(str(row["freight_rmb"]))

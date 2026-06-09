@@ -358,15 +358,15 @@ def get_country_id(cursor, code):
     return row[0] if row else None
 
 
-def get_or_create_product(cursor, asin, sku=None, product_name=None, color=None, cost_rmb=0, weight=0):
-    """获取或创建产品记录，返回 product_id"""
-    cursor.execute("SELECT id FROM dim_product WHERE asin = %s", (asin,))
+def get_or_create_product(cursor, asin, store_id, sku=None, product_name=None, color=None, cost_rmb=0, weight=0):
+    """获取或创建产品记录（店铺隔离），返回 product_id"""
+    cursor.execute("SELECT id FROM dim_product WHERE asin = %s AND store_id = %s", (asin, store_id))
     row = cursor.fetchone()
     if row:
         return row[0]
     cursor.execute(
-        "INSERT INTO dim_product (asin, sku, product_name, color, cost_rmb, weight) VALUES (%s,%s,%s,%s,%s,%s)",
-        (asin, sku, product_name, color, cost_rmb, weight)
+        "INSERT INTO dim_product (asin, store_id, sku, product_name, color, cost_rmb, weight) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+        (asin, store_id, sku, product_name, color, cost_rmb, weight)
     )
     return cursor.lastrowid
 
@@ -421,33 +421,33 @@ def import_products():
             skipped += 1
             continue
 
-        # 创建/更新产品
-        product_id = get_or_create_product(cursor, asin, sku, product_name, color, cost_rmb, weight)
+        # 创建/更新产品（店铺隔离）
+        product_id = get_or_create_product(cursor, asin, store_id, sku, product_name, color, cost_rmb, weight)
 
-        # UK 运费
+        # UK 运费（店铺隔离）
         if uk_id and freight_uk > 0:
             cursor.execute("""
-                INSERT INTO dim_freight (product_id, country_id, freight_rmb)
-                VALUES (%s, %s, %s)
+                INSERT INTO dim_freight (product_id, country_id, store_id, freight_rmb)
+                VALUES (%s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE freight_rmb = VALUES(freight_rmb)
-            """, (product_id, uk_id, freight_uk))
+            """, (product_id, uk_id, store_id, freight_uk))
 
-        # IE 运费
+        # IE 运费（店铺隔离）
         if ie_id and freight_ie > 0:
             cursor.execute("""
-                INSERT INTO dim_freight (product_id, country_id, freight_rmb)
-                VALUES (%s, %s, %s)
+                INSERT INTO dim_freight (product_id, country_id, store_id, freight_rmb)
+                VALUES (%s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE freight_rmb = VALUES(freight_rmb)
-            """, (product_id, ie_id, freight_ie))
+            """, (product_id, ie_id, store_id, freight_ie))
 
-        # 其他国家用默认运费
+        # 其他国家用默认运费（店铺隔离）
         for code, cid in other_country_ids.items():
             if freight_default > 0:
                 cursor.execute("""
-                    INSERT INTO dim_freight (product_id, country_id, freight_rmb)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO dim_freight (product_id, country_id, store_id, freight_rmb)
+                    VALUES (%s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE freight_rmb = VALUES(freight_rmb)
-                """, (product_id, cid, freight_default))
+                """, (product_id, cid, store_id, freight_default))
 
         imported += 1
 
