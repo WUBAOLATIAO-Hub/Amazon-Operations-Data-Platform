@@ -54,6 +54,7 @@ export const deleteCountry = (code) => api.delete(`/admin/countries/${code}`)
 
 // 查询
 export const getMonthlySummary = (params) => api.get('/query/monthly-summary', { params })
+export const getCountrySummary = (params) => api.get('/query/country-summary', { params })
 export const getTransactions = (params) => api.get('/query/transactions', { params })
 
 export default api
