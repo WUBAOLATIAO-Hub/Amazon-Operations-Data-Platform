@@ -70,6 +70,8 @@ def get_country_summary(
             q = q.filter(*filters)
 
         q = q.group_by(DimCountry.id, DimCountry.code, DimCountry.name)
+        # 过滤掉没有实际订单的国家（导入时生成的空记录）
+        q = q.having(func.sum(MonthlySummary.order_count) > 0)
         rows = q.all()
 
         # 计算总销售额用于占比
@@ -209,9 +211,10 @@ def get_monthly_summary(
                 func.coalesce(func.sum(MonthlySummary.freight_cost_rmb), 0).label("ms_freight_cost_rmb"),
                 func.coalesce(func.sum(MonthlySummary.net_profit_rmb), 0).label("ms_net_profit_rmb"),
             )
-            .outerjoin(MonthlySummary, and_(*ms_on))
+            .join(MonthlySummary, and_(*ms_on))
             .filter(DimProduct.asin.notlike("Amazon.%"))
             .group_by(DimProduct.id, DimProduct.product_name, DimProduct.asin, DimProduct.sku, DimProduct.color)
+            .having(func.sum(MonthlySummary.order_count) > 0)
         )
 
         if keyword:
