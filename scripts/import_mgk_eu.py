@@ -385,6 +385,63 @@ def get_time_id(cursor, year, month):
 
 
 # ============================================================
+# 0. 导入汇率
+# ============================================================
+def import_exchange_rates():
+    print("\n=== 导入汇率 ===")
+    filepath = os.path.join(DATA_DIR, "汇率.xlsx")
+    if not os.path.exists(filepath):
+        print("  文件不存在，跳过")
+        return
+
+    df = pd.read_excel(filepath)
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # 默认月份：从销售数据推断（取最早的交易月份）
+    # 也可以后续改成从文件读取
+    year_month = "2026-05"
+
+    imported = 0
+    for _, row in df.iterrows():
+        code = str(row["国家"]).strip()
+        rate = float(row["汇率"])
+
+        cursor.execute("SELECT id FROM dim_country WHERE code = %s", (code,))
+        result = cursor.fetchone()
+        if not result:
+            print(f"  [{code}] 国家不存在，跳过")
+            continue
+        country_id = result[0]
+
+        # INSERT OR UPDATE
+        cursor.execute("""
+            SELECT id FROM dim_exchange_rate
+            WHERE country_id = %s AND `year_month` = %s
+        """, (country_id, year_month))
+        existing = cursor.fetchone()
+
+        if existing:
+            cursor.execute("""
+                UPDATE dim_exchange_rate SET rate = %s
+                WHERE country_id = %s AND `year_month` = %s
+            """, (rate, country_id, year_month))
+        else:
+            cursor.execute("""
+                INSERT INTO dim_exchange_rate (country_id, `year_month`, rate)
+                VALUES (%s, %s, %s)
+            """, (country_id, year_month, rate))
+
+        imported += 1
+        print(f"  [{code}] {rate}")
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+    print(f"  汇率导入: {imported} 条 ({year_month})")
+
+
+# ============================================================
 # 1. 导入产品信息 + 运费
 # ============================================================
 def import_products():
@@ -1034,7 +1091,9 @@ if __name__ == "__main__":
 
     if len(sys.argv) > 1:
         target = sys.argv[1]
-        if target == "products":
+        if target == "rates":
+            import_exchange_rates()
+        elif target == "products":
             import_products()
         elif target == "sales":
             import_sales()
@@ -1048,9 +1107,10 @@ if __name__ == "__main__":
             import_returns()
         else:
             print(f"未知目标: {target}")
-            print("用法: python import_mgk_eu.py [products|sales|advertising|storage|aged|returns]")
+            print("用法: python import_mgk_eu.py [rates|products|sales|advertising|storage|aged|returns]")
     else:
-        # 全部导入
+        # 全部导入（汇率 → 产品 → 销售 → 广告 → 仓储 → 超龄 → 退回）
+        import_exchange_rates()
         import_products()
         import_sales()
         import_advertising()

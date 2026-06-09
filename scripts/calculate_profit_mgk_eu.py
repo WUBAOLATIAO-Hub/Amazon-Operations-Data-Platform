@@ -85,7 +85,7 @@ def calculate_by_product_country_month():
     cursor.execute("""
         SELECT dc.id, dc.code, COALESCE(der.rate, 0) as rate
         FROM dim_country dc
-        LEFT JOIN dim_exchange_rate der ON der.country_id = dc.id AND der.year_month = %s
+        LEFT JOIN dim_exchange_rate der ON der.country_id = dc.id AND der.`year_month` = %s
     """, (EXCHANGE_MONTH,))
     country_map = {}
     for row in cursor.fetchall():
@@ -149,7 +149,7 @@ def calculate_by_product_country_month():
         SELECT
             rt.sku,
             dc.code as country_code,
-            dt.year_month,
+            dt.`year_month`,
             SUM(rt.product_sales) as sum_product_sales,
             SUM(rt.selling_fee) as sum_selling_fee,
             SUM(rt.fba_fee) as sum_fba_fee,
@@ -165,7 +165,7 @@ def calculate_by_product_country_month():
                         AND dt.time_month = MONTH(rt.transaction_date)
         WHERE ds.store_code = %s
           AND rt.transaction_type IN ('Order', 'Refund')
-        GROUP BY rt.sku, dc.code, dt.year_month
+        GROUP BY rt.sku, dc.code, dt.`year_month`
     """, (STORE_CODE,))
 
     results = cursor.fetchall()
