@@ -2874,7 +2874,7 @@ def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None):
 
 
 def _ensure_all_products_have_summary(db, country_obj, store_id=None):
-    """为有成本的产品补建缺失月份的 monthly_summary 记录"""
+    """为有实际原始数据的产品补建缺失月份的 monthly_summary 记录"""
     all_times = db.query(DimTime).all()
     if not all_times:
         return
@@ -2882,6 +2882,18 @@ def _ensure_all_products_have_summary(db, country_obj, store_id=None):
         DimProduct.asin.notlike("Amazon.%")
     ).all()
     for product in all_products:
+        # 只为有实际交易/广告/仓储等原始数据的产品创建记录
+        has_data = db.query(RawTransaction.id).filter(
+            RawTransaction.country_id == country_obj.id,
+            RawTransaction.sku == product.sku,
+        ).first()
+        if not has_data:
+            has_data = db.query(RawAdvertising.id).filter(
+                RawAdvertising.country_id == country_obj.id,
+                RawAdvertising.asin == product.asin,
+            ).first()
+        if not has_data:
+            continue
         # 获取已有记录的月份ID集合
         existing_ids = set(
             r[0] for r in db.query(MonthlySummary.time_id).filter(
