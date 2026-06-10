@@ -20,7 +20,7 @@ router = APIRouter()
 
 
 def _detect_country_from_data(db: Session, header, rows):
-    """从数据文件中自动检测国家: marketplace/country_code → US/UK/DE/CA/MX"""
+    """从数据文件中自动检测国家: marketplace/country_code → 各国代码"""
     mp_idx = None; cc_idx = None
     for i, h in enumerate(header):
         hl = h.lower().strip() if h else ""
@@ -36,6 +36,15 @@ def _detect_country_from_data(db: Session, header, rows):
             if v in ('us', 'usa', 'amazon.com', 'united states'): return 'US'
             if v in ('uk', 'gb', 'gbr', 'amazon.co.uk', 'united kingdom'): return 'UK'
             if v in ('de', 'deu', 'amazon.de', 'germany'): return 'DE'
+            if v in ('fr', 'fra', 'amazon.fr', 'france'): return 'FR'
+            if v in ('es', 'esp', 'amazon.es', 'spain'): return 'ES'
+            if v in ('it', 'ita', 'amazon.it', 'italy'): return 'IT'
+            if v in ('nl', 'nld', 'amazon.nl', 'netherlands'): return 'NL'
+            if v in ('se', 'swe', 'amazon.se', 'sweden'): return 'SE'
+            if v in ('be', 'bel', 'amazon.com.be', 'belgium'): return 'BE'
+            if v in ('ie', 'irl', 'amazon.ie', 'ireland'): return 'IE'
+            if v in ('ae', 'are', 'amazon.ae', 'uae'): return 'AE'
+            if v in ('sa', 'sau', 'amazon.sa', 'saudi'): return 'SA'
     return None
 
 
@@ -140,24 +149,32 @@ def _extract_real_sku(sku: str):
     return None
 
 
-def _get_exchange_rate(db: Session, country_obj, import_year=None, import_month=None) -> Decimal:
-    """获取汇率：优先从 dim_exchange_rate 按(国家,月份)查找，否则按国家给默认值"""
+def _get_exchange_rate(db: Session, country_obj, import_year=None, import_month=None, store_id=None) -> Decimal:
+    """获取汇率：仅店铺专属 → 再默认值"""
     ym = None
     if import_year and import_month:
         ym = f"{import_year}-{import_month:02d}"
-    if ym:
+    if ym and store_id:
+        # 店铺专属汇率（精确月份）
         er = db.query(DimExchangeRate).filter(
             DimExchangeRate.country_id == country_obj.id,
             DimExchangeRate.year_month == ym,
+            DimExchangeRate.store_id == store_id,
         ).first()
         if er and er.rate and Decimal(str(er.rate)) != 0:
             return Decimal(str(er.rate))
-    # 无月份匹配时，取该国家任意一条汇率记录
-    er = db.query(DimExchangeRate).filter(DimExchangeRate.country_id == country_obj.id).first()
-    if er and er.rate and Decimal(str(er.rate)) != 0:
-        return Decimal(str(er.rate))
-    # 默认值：按国家货币
-    defaults = {'US': '6.8', 'UK': '9.0', 'DE': '7.5', 'CA': '5.0', 'MX': '0.4'}
+    if store_id:
+        # 店铺专属汇率（任意月份）
+        er = db.query(DimExchangeRate).filter(
+            DimExchangeRate.country_id == country_obj.id,
+            DimExchangeRate.store_id == store_id,
+        ).first()
+        if er and er.rate and Decimal(str(er.rate)) != 0:
+            return Decimal(str(er.rate))
+    # 默认值
+    defaults = {'US': '6.8', 'UK': '9.0', 'DE': '7.5', 'FR': '7.5', 'ES': '7.5', 'IT': '7.5',
+                'NL': '7.5', 'SE': '0.65', 'BE': '7.5', 'IE': '7.5', 'CA': '5.0', 'MX': '0.4',
+                'AE': '1.85', 'SA': '1.81'}
     return Decimal(defaults.get(country_obj.code, '6.8'))
 
 
@@ -233,21 +250,55 @@ def _safe_int(value, default=0) -> int:
 
 
 def _detect_date_format(date_str: str):
-    """尝试解析多种日期格式"""
+    """尝试解析多种日期格式（支持英/德/法/西/意/荷/瑞典语月份）"""
     date_str = date_str.strip()
-    # 移除时区后缀 (PDT, PST, EST, GMT-7, GMT+5:30 等)
+    # 移除时区后缀 (PDT, PST, EST, UTC, GMT-7, GMT+5:30 等)
     date_str_clean = re.sub(r'\s+[A-Z]{2,4}[\d\-+:]*$', '', date_str)
     # 统一 a.m./p.m. → AM/PM（西班牙语格式用 .replace 因为 \b 和 . 冲突）
     date_str_clean = date_str_clean.replace('a.m.', 'AM').replace('p.m.', 'PM')
     date_str_clean = date_str_clean.replace('A.M.', 'AM').replace('P.M.', 'PM')
+    # 非英语月份名 → 英语月份名
+    _month_map = {
+        'janvier': 'January', 'février': 'February', 'mars': 'March',
+        'avril': 'April', 'mai': 'May', 'juin': 'June',
+        'juillet': 'July', 'août': 'August', 'septembre': 'September',
+        'octobre': 'October', 'novembre': 'November', 'décembre': 'December',
+        'gennaio': 'January', 'febbraio': 'February', 'marzo': 'March',
+        'aprile': 'April', 'maggio': 'May', 'giugno': 'June',
+        'luglio': 'July', 'agosto': 'August', 'settembre': 'September',
+        'ottobre': 'October', 'novembre': 'November', 'dicembre': 'December',
+        'januari': 'January', 'februari': 'February', 'maart': 'March',
+        'mei': 'May', 'juni': 'June', 'juli': 'July',
+        'augustus': 'August', 'oktober': 'October', 'december': 'December',
+        'januar': 'January', 'februar': 'February', 'märz': 'March',
+        'september': 'September', 'dezember': 'December',
+        'enero': 'January', 'febrero': 'February', 'abril': 'April',
+        'mayo': 'May', 'junio': 'June', 'julio': 'July',
+        'septiembre': 'September', 'octubre': 'October', 'diciembre': 'December',
+        'maj': 'May', 'augusti': 'August',
+        'gen': 'Jan', 'feb': 'Feb', 'mag': 'May', 'giu': 'Jun',
+        'lug': 'Jul', 'ago': 'Aug', 'set': 'Sep', 'ott': 'Oct', 'dic': 'Dec',
+    }
+    lower = date_str_clean.lower()
+    for local, eng in _month_map.items():
+        if local in lower:
+            date_str_clean = date_str_clean.replace(local, eng)
+            date_str_clean = date_str_clean.replace(local.capitalize(), eng)
+            break
     formats = [
         "%d %b %Y %I:%M:%S %p",    # 5 may 2026 5:08:09 AM (MX无逗号格式)
+        "%d %B %Y %I:%M:%S %p",    # 2 mai 2026 03:04:42 AM (French full month)
+        "%d %b %Y %H:%M:%S",       # 9 maj 2026 03:41:35 (Swedish)
+        "%d %B %Y %H:%M:%S",       # 9 maj 2026 03:41:35 (Swedish full)
         "%b %d, %Y %I:%M:%S %p",   # May 1, 2026 5:46:45 AM
         "%b %d, %Y %I:%M %p",
         "%b %d, %Y",
+        "%d.%m.%Y %H:%M:%S",       # 01.05.2026 10:05:35 (German)
+        "%d.%m.%Y",                 # 01.05.2026 (German date only)
         "%m/%d/%Y %H:%M:%S",
         "%m/%d/%Y %H:%M",
         "%m/%d/%Y",
+        "%Y-%m-%dT%H:%M:%S%z",     # ISO 8601
         "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%d %H:%M",
         "%Y-%m-%d",
@@ -338,6 +389,124 @@ async def import_transaction(
             'total': 'total',
             'estado de la transacción': 'transaction_status',
             'fecha de liberación de la transacción': 'transaction_release_date',
+            # French → English
+            'numéro de versement': 'settlement id',
+            'commande': 'Order', 'remboursement': 'Refund',
+            'numéro de la commande': 'order id',
+            'quantité': 'quantity',
+            'traitement': 'fulfillment',
+            'ventes de produits': 'product sales',
+            'taxes sur la vente des produits': 'product sales tax',
+            "crédits d'expédition": 'shipping credits',
+            "taxe sur les crédits d’expédition": 'shipping credits tax',
+            "crédits sur l'emballage cadeau": 'gift wrap credits',
+            'taxes sur les crédits cadeaux': 'gift wrap credits tax',
+            'rabais promotionnels': 'promotional rebates',
+            'taxes sur les remises promotionnelles': 'promotional rebates tax',
+            'taxes retenues sur le site de vente': 'marketplace withheld tax',
+            'frais de vente': 'selling fees',
+            'frais expédié par amazon': 'fba fees',
+            'autres frais de transaction': 'other transaction fees',
+            'autre': 'other',
+            'statut de la transaction': 'transaction_status',
+            'date de sortie de la transaction': 'transaction_release_date',
+            'frais de service': 'Service fee',
+            'transférer': 'Transfer',
+            'frais de transaction expédié par amazon': 'FBA transaction fees',
+            # German → English
+            'datum/uhrzeit': 'date/time',
+            'abrechnungsnummer': 'settlement id',
+            'typ': 'type',
+            'bestellung': 'Order', 'erstattung': 'Refund',
+            'bestellnummer': 'order id',
+            'menge': 'quantity',
+            'versand': 'fulfillment',
+            'umsätze': 'product sales',
+            'produktumsatzsteuer': 'product sales tax',
+            'gutschrift für versandkosten': 'shipping credits',
+            'steuer auf versandgutschrift': 'shipping credits tax',
+            'gutschrift für geschenkverpackung': 'gift wrap credits',
+            'steuer auf geschenkverpackungsgutschriften': 'gift wrap credits tax',
+            'rabatte aus werbeaktionen': 'promotional rebates',
+            'steuer auf aktionsrabatte': 'promotional rebates tax',
+            'einbehaltene steuer auf marketplace': 'marketplace withheld tax',
+            'verkaufsgebühren': 'selling fees',
+            'gebühren zu versand durch amazon': 'fba fees',
+            'andere transaktionsgebühren': 'other transaction fees',
+            'andere': 'other',
+            'gesamt': 'total',
+            'transaktionsstatus': 'transaction_status',
+            'freigabedatum der transaktion': 'transaction_release_date',
+            'servicegebühr': 'Service fee',
+            'übertrag': 'Transfer',
+            'transaktionsgebühren für versand durch amazon': 'FBA transaction fees',
+            'versand durch amazon lagergebühr': 'FBA Inventory Fee',
+            'bestellung_wiedereinzug': 'Order',
+            # Dutch → English
+            'datum/tijd': 'date/time',
+            'schikkings-id': 'settlement id',
+            'bestelling': 'Order', 'terugbetaling': 'Refund',
+            'bestelnummer': 'order id',
+            'aantal': 'quantity',
+            'verkoop van producten': 'product sales',
+            'verzendtegoeden': 'shipping credits',
+            'kredietpunten cadeauverpakking': 'gift wrap credits',
+            'promotiekortingen': 'promotional rebates',
+            'geïnde omzetbelasting': 'marketplace withheld tax',
+            'verkoopkosten': 'selling fees',
+            'fba-vergoedingen': 'fba fees',
+            'overige transactiekosten': 'other transaction fees',
+            'overige': 'other',
+            'totaal': 'total',
+            'transactiestatus': 'transaction_status',
+            'publicatiedatum van transactie': 'transaction_release_date',
+            'servicekosten': 'Service fee',
+            'overboeking': 'Transfer',
+            # Swedish → English
+            'datum/tid': 'date/time',
+            'reglerings-id': 'settlement id',
+            'beställning': 'Order', 'återbäring': 'Refund',
+            'beställnings-id': 'order id',
+            'antal': 'quantity',
+            'leverans': 'fulfillment',
+            'försäljning av produkter': 'product sales',
+            'fraktkrediter': 'shipping credits',
+            'krediter för presentinslagning': 'gift wrap credits',
+            'kampanjrabatter': 'promotional rebates',
+            'inkasserad moms': 'marketplace withheld tax',
+            'försäljningsavgifter': 'selling fees',
+            'fba-avgifter': 'fba fees',
+            'övriga transaktionsavgifter': 'other transaction fees',
+            'övrigt': 'other',
+            'totalt': 'total',
+            'transaktionsstatus': 'transaction_status',
+            'transaktionens utgivningsdatum': 'transaction_release_date',
+            'överföring': 'Transfer',
+            # Italian → English
+            'data/ora:': 'date/time', 'data/ora': 'date/time',
+            'numero pagamento': 'settlement id',
+            'ordine': 'Order', 'rimborso': 'Refund',
+            'numero ordine': 'order id',
+            'quantità': 'quantity',
+            'gestione': 'fulfillment',
+            'vendite': 'product sales',
+            'imposta sulle vendite dei prodotti': 'product sales tax',
+            'accrediti per le spedizioni': 'shipping credits',
+            'imposta accrediti per le spedizioni': 'shipping credits tax',
+            'accrediti per confezioni regalo': 'gift wrap credits',
+            'imposta sui crediti confezione regalo': 'gift wrap credits tax',
+            'sconti promozionali': 'promotional rebates',
+            'imposta sugli sconti promozionali': 'promotional rebates tax',
+            'trattenuta iva del marketplace': 'marketplace withheld tax',
+            'commissioni di vendita': 'selling fees',
+            'costi del servizio logistica di amazon': 'fba fees',
+            'altri costi relativi alle transazioni': 'other transaction fees',
+            'altro': 'other',
+            'stato della transazione': 'transaction_status',
+            'data di rilascio della transazione': 'transaction_release_date',
+            'trasferimento': 'Transfer',
+            'modifica': 'Adjustment',
+            'commissioni per le transazioni di logistica di amazon': 'FBA transaction fees',
         }
         # 字段映射（去空格、小写化）
         def map_header(h):
@@ -525,7 +694,7 @@ async def import_transaction(
             if not product:
                 continue
             time_obj = _get_or_create_time(db, year, month)
-            exchange_rate = _get_exchange_rate(db, country_obj, year, month)
+            exchange_rate = _get_exchange_rate(db, country_obj, year, month, store_id=store_obj.id)
 
             summary = _get_or_create_monthly_summary(db, country_obj.id, product.id, time_obj.id, store_id=store_obj.id)
 
@@ -584,7 +753,7 @@ async def import_transaction(
             if not product:
                 continue
             time_obj = _get_or_create_time(db, adj_year, adj_month)
-            exchange_rate = _get_exchange_rate(db, country_obj, adj_year, adj_month)
+            exchange_rate = _get_exchange_rate(db, country_obj, adj_year, adj_month, store_id=store_obj.id)
             summary = _get_or_create_monthly_summary(db, country_obj.id, product.id, time_obj.id, store_id=store_obj.id)
             summary.adjustment_usd = (summary.adjustment_usd or Decimal("0")) + adj_agg["total"]
             # 无 order_id 的 Adjustment：调整 order_qty 和成本
@@ -888,7 +1057,7 @@ async def import_advertising(
             if not product:
                 continue
 
-            exchange_rate = _get_exchange_rate(db, country_obj, ad_year, ad_month)
+            exchange_rate = _get_exchange_rate(db, country_obj, ad_year, ad_month, store_id=store_obj.id)
 
             # 确定目标月份
             if ad_year and ad_month:
@@ -1118,7 +1287,7 @@ async def import_storage(
             ym_parts = None
             if time_obj_for_rate:
                 ym_parts = time_obj_for_rate.year_month.split("-")
-            exchange_rate = _get_exchange_rate(db, country_obj, int(ym_parts[0]) if ym_parts else None, int(ym_parts[1]) if ym_parts else None)
+            exchange_rate = _get_exchange_rate(db, country_obj, int(ym_parts[0]) if ym_parts else None, int(ym_parts[1]) if ym_parts else None, store_id=store_obj.id)
 
             for summary in target_summaries:
                 summary.storage_fee_usd = total_fee
@@ -1279,7 +1448,7 @@ async def import_returns(
                 # 按月份获取汇率
                 time_obj = db.query(DimTime).filter(DimTime.id == summary.time_id).first()
                 ym = time_obj.year_month.split("-") if time_obj and time_obj.year_month else None
-                exchange_rate = _get_exchange_rate(db, country_obj, int(ym[0]) if ym else None, int(ym[1]) if ym else None)
+                exchange_rate = _get_exchange_rate(db, country_obj, int(ym[0]) if ym else None, int(ym[1]) if ym else None, store_id=store_obj.id)
 
                 net = (
                     summary.product_sales_rmb
@@ -1440,7 +1609,7 @@ async def import_inbound(
                 # 按月份获取汇率
                 time_obj = db.query(DimTime).filter(DimTime.id == summary.time_id).first()
                 ym = time_obj.year_month.split("-") if time_obj and time_obj.year_month else None
-                exchange_rate = _get_exchange_rate(db, country_obj, int(ym[0]) if ym else None, int(ym[1]) if ym else None)
+                exchange_rate = _get_exchange_rate(db, country_obj, int(ym[0]) if ym else None, int(ym[1]) if ym else None, store_id=store_obj.id)
 
                 net = (
                     summary.product_sales_rmb
@@ -1585,11 +1754,13 @@ async def import_folder(
                 # Detect type from header
                 headers = []
                 file_type = None
+                _txn_date_headers = ('date/time', 'fecha/hora', 'fecha y hora', 'datum/uhrzeit', 'date/heure',
+                                     'data/ora', 'data/ora:', 'datum/tijd', 'datum/tid')
                 for try_row in [9, 8, 0]:
                     if try_row < len(lines):
                         headers = [h.strip().strip('\"').lower() for h in lines[try_row].split(',')]
                         hs = ' '.join(headers)
-                        if any(h in ('date/time','fecha/hora') for h in headers) and 'sku' in headers:
+                        if any(h in _txn_date_headers for h in headers) and 'sku' in headers:
                             file_type = 'transaction'; break
                         if '商品' in hs and ('花费' in hs or 'roas' in hs):
                             file_type = 'advertising'; break
@@ -1609,14 +1780,37 @@ async def import_folder(
                 # Detect country
                 detected = country if country != 'auto' else None
                 if not detected and file_type == 'transaction':
-                    # Scan marketplace column
+                    # Scan marketplace column for country
                     for line in lines:
                         parts = line.lower().split(',')
                         for p in parts:
                             p = p.strip().strip('\"')
                             if 'amazon.com.mx' in p: detected = 'MX'; break
                             if 'amazon.ca' in p: detected = 'CA'; break
-                            if 'amazon.com' in p: detected = 'US'; break
+                            if 'amazon.ae' in p: detected = 'AE'; break
+                            if 'amazon.sa' in p: detected = 'SA'; break
+                            if 'amazon.co.uk' in p: detected = 'UK'; break
+                            if 'amazon.de' in p: detected = 'DE'; break
+                            if 'amazon.fr' in p: detected = 'FR'; break
+                            if 'amazon.es' in p: detected = 'ES'; break
+                            if 'amazon.it' in p: detected = 'IT'; break
+                            if 'amazon.nl' in p: detected = 'NL'; break
+                            if 'amazon.se' in p: detected = 'SE'; break
+                            if 'amazon.com.be' in p: detected = 'BE'; break
+                            if 'amazon.ie' in p: detected = 'IE'; break
+                            if 'amazon.com' in p and 'amazon.com.' not in p: detected = 'US'; break
+                        if detected: break
+                # Fallback: detect from filename
+                if not detected:
+                    fn_lower = filename.lower()
+                    _fn_country_map = {
+                        '英国': 'UK', '德国': 'DE', '法国': 'FR', '西班牙': 'ES',
+                        '意大利': 'IT', '荷兰': 'NL', '瑞典': 'SE', '比利时': 'BE',
+                        '爱尔兰': 'IE', '阿联酋': 'AE', '沙特': 'SA',
+                    }
+                    for kw, cc in _fn_country_map.items():
+                        if kw in fn_lower:
+                            detected = cc; break
                 detected = detected or 'US'
                 
                 # Find country 
@@ -1662,19 +1856,120 @@ async def import_folder(
             elif filename.endswith('.xlsx'):
                 import openpyxl
                 wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-                ws = wb.active
-                rows = list(ws.iter_rows(values_only=True))
-                if not rows: continue
-                headers = [str(c).lower().strip() if c else '' for c in rows[0]]
-                hs = ' '.join(headers)
-                file_type = None
-                if 'asin' in headers:
-                    if '成本' in hs or 'color' in hs: file_type = 'product_info'
-                    elif 'estimated_monthly_storage_fee' in hs or 'fulfillment_center' in hs: file_type = 'storage'
-                if file_type:
-                    results.append(f'✓ {filename}: {file_type}, {len(rows)}行')
-                else:
-                    results.append(f'⚠ {filename}: 无法识别')
+                _txn_date_headers_xlsx = ('date/time', 'date / time', 'fecha/hora', 'fecha y hora',
+                                          'datum/uhrzeit', 'date/heure', 'data/ora', 'data/ora:',
+                                          'datum/tijd', 'datum/tid')
+
+                for sheet_name in wb.sheetnames:
+                    try:
+                        ws = wb[sheet_name]
+                        rows = list(ws.iter_rows(values_only=True))
+                        if not rows or len(rows) < 2:
+                            results.append(f'⏭ {sheet_name}: 数据不足')
+                            continue
+
+                        # Try first row as header
+                        headers = [str(c).lower().strip() if c else '' for c in rows[0]]
+                        hs = ' '.join(headers)
+                        file_type = None
+                        data_rows = rows[1:]
+
+                        # Check if first row is actually metadata (no recognizable headers)
+                        # Try row 10 (index 9) for transaction CSV-style sheets
+                        if not any(h in _txn_date_headers_xlsx for h in headers) and 'sku' not in headers and 'asin' not in headers and '商品' not in hs:
+                            if len(rows) > 9:
+                                row10 = [str(c).lower().strip() if c else '' for c in rows[9]]
+                                hs10 = ' '.join(row10)
+                                if any(h in _txn_date_headers_xlsx for h in row10) and 'sku' in row10:
+                                    headers = row10
+                                    hs = hs10
+                                    data_rows = rows[10:]
+                                    file_type = 'transaction'
+
+                        if not file_type:
+                            if any(h in _txn_date_headers_xlsx for h in headers) and 'sku' in headers:
+                                file_type = 'transaction'
+                            elif 'asin' in headers:
+                                if '成本' in hs or 'cost' in hs or 'color' in hs:
+                                    file_type = 'product_info'
+                                elif 'estimated_monthly_storage_fee' in hs or 'fulfillment_center' in hs:
+                                    file_type = 'storage'
+                                elif 'sku_returns_fee' in hs or 'returned_units' in hs:
+                                    file_type = 'returns'
+                            elif '商品' in hs and ('花费' in hs or 'roas' in hs):
+                                file_type = 'advertising'
+
+                        if not file_type:
+                            # 检查汇率表
+                            if '汇率' in headers and ('国家' in headers or 'country' in headers):
+                                file_type = 'exchange_rate'
+
+                        if not file_type:
+                            results.append(f'⏭ {sheet_name}: 无法识别类型')
+                            continue
+
+                        # Detect country from sheet name
+                        detected_cc = None
+                        _sheet_cc = {
+                            '英国': 'UK', 'UK': 'UK', '德国': 'DE', 'DE': 'DE',
+                            '法国': 'FR', 'FR': 'FR', '西班牙': 'ES', 'ES': 'ES',
+                            '意大利': 'IT', 'IT': 'IT', '荷兰': 'NL', 'NL': 'NL',
+                            '瑞典': 'SE', 'SE': 'SE', '比利时': 'BE', 'BE': 'BE',
+                            '爱尔兰': 'IE', 'IE': 'IE', '阿联酋': 'AE', 'AE': 'AE',
+                            '沙特': 'SA', 'SA': 'SA',
+                        }
+                        for kw, cc in _sheet_cc.items():
+                            if kw in sheet_name:
+                                detected_cc = cc; break
+                        if not detected_cc:
+                            detected_cc = country if country != 'auto' else 'US'
+
+                        cc_obj = db.query(DimCountry).filter(DimCountry.code == detected_cc).first()
+                        if not cc_obj:
+                            results.append(f'⏭ {sheet_name}: 国家 {detected_cc} 不存在')
+                            continue
+
+                        if file_type == 'exchange_rate':
+                            # 汇率表：遍历所有行，按店铺+国家 upsert
+                            _ym = f"{import_year}-{import_month:02d}" if import_year and import_month else None
+                            if not _ym:
+                                from datetime import date
+                                _t = date.today()
+                                _ym = f"{_t.year}-{_t.month:02d}"
+                            _ci = next((i for i, h in enumerate(headers) if h in ("国家", "country")), None)
+                            _ri = next((i for i, h in enumerate(headers) if h == "汇率"), None)
+                            _imported = 0
+                            if _ci is not None and _ri is not None:
+                                for row in data_rows:
+                                    _cc = str(row[_ci] or "").strip().upper()
+                                    _rate = row[_ri]
+                                    if not _cc or _rate is None: continue
+                                    _co = db.query(DimCountry).filter(DimCountry.code == _cc).first()
+                                    if not _co: continue
+                                    from decimal import Decimal as _D
+                                    _rv = _D(str(_rate))
+                                    _ex = db.query(DimExchangeRate).filter(DimExchangeRate.country_id == _co.id, DimExchangeRate.year_month == _ym, DimExchangeRate.store_id == store_obj.id).first()
+                                    if _ex: _ex.rate = _rv
+                                    else: db.add(DimExchangeRate(country_id=_co.id, year_month=_ym, rate=_rv, store_id=store_obj.id))
+                                    _imported += 1
+                            results.append(f'✓ {sheet_name}: exchange_rate {_imported}条({_ym})')
+                        elif file_type == 'transaction':
+                            result = _process_transaction_sheet(db, cc_obj, headers, data_rows, store_id=store_obj.id, import_year=import_year, import_month=import_month)
+                            results.append(f'✓ {sheet_name}: transaction({detected_cc}) raw:{result.get("raw_rows",0)} summary:{result.get("summary_rows",0)}')
+                        elif file_type == 'product_info':
+                            result = _process_product_info_sheet(db, headers, data_rows, import_year=import_year, import_month=import_month)
+                            results.append(f'✓ {sheet_name}: product_info {result.get("rows",0)}行')
+                        elif file_type == 'advertising':
+                            result = _process_advertising_sheet(db, cc_obj, headers, data_rows, store_id=store_obj.id, import_year=import_year, import_month=import_month)
+                            results.append(f'✓ {sheet_name}: advertising({detected_cc}) {result.get("csv_rows",0)}行')
+                        else:
+                            result = _process_fee_sheet(db, cc_obj, headers, data_rows, file_type, store_id=store_obj.id, import_year=import_year, import_month=import_month)
+                            results.append(f'✓ {sheet_name}: {file_type}({detected_cc}) {result.get("csv_rows",0)}行')
+                    except Exception as e:
+                        results.append(f'✗ {sheet_name}: {str(e)[:80]}')
+
+                # Close workbook
+                wb.close()
         
         except Exception as e:
             results.append(f'✗ {filename}: {str(e)[:80]}')
@@ -1682,17 +1977,18 @@ async def import_folder(
     db.commit()
     # 补建 summary + 重算利润（所有涉及的国家）
     detected_countries = set()
+    _valid_countries = {'US', 'UK', 'DE', 'CA', 'MX', 'FR', 'ES', 'IT', 'NL', 'SE', 'BE', 'IE', 'AE', 'SA'}
     for r in results:
         if isinstance(r, str) and '(' in r and ')' in r:
             cc = r.split('(')[1].split(')')[0]
-            if cc in ('US', 'UK', 'DE', 'CA', 'MX'):
+            if cc in _valid_countries:
                 detected_countries.add(cc)
     if not detected_countries:
         detected_countries = {'US'}
     for cc in detected_countries:
         co = db.query(DimCountry).filter(DimCountry.code == cc).first()
         if co:
-            _ensure_all_products_have_summary(db, co, store_id=store_obj.id)
+            _ensure_all_products_have_summary(db, co, store_id=store_obj.id, import_year=import_year, import_month=import_month)
             _recalculate_all_profit(db, co)
     db.commit()
     return {"message": f"处理完成，共 {len(results)} 个文件", "countries": list(detected_countries), "files": results}
@@ -1712,7 +2008,9 @@ def _process_csv_file(db, country_obj, store_id, filename, lines, import_year=No
     header_row = 0
     for i in range(min(15, len(all_rows))):
         lh = [h.strip().strip('\"').lower() for h in all_rows[i]]
-        if any(k in lh for k in ['sku', 'asin', '商品', 'date/time', 'fecha/hora']):
+        if any(k in lh for k in ['sku', 'asin', '商品', 'date/time', 'fecha/hora', 'fecha y hora',
+                                   'datum/uhrzeit', 'date/heure', 'data/ora', 'data/ora:',
+                                   'datum/tijd', 'datum/tid']):
             header_row = i; break
     
     headers = [h.strip().strip('\"').lower() for h in all_rows[header_row]]
@@ -1720,36 +2018,193 @@ def _process_csv_file(db, country_obj, store_id, filename, lines, import_year=No
     hs = ' '.join(headers)
     
     # === TRANSACTION ===
-    if ('date/time' in headers or 'fecha/hora' in headers) and 'sku' in headers:
-        # Multi-lang mapping (Spanish → English)
+    if any(h in ('date/time', 'fecha/hora', 'fecha y hora', 'datum/uhrzeit', 'date/heure',
+                  'data/ora', 'data/ora:', 'datum/tijd', 'datum/tid') for h in headers) and 'sku' in headers:
+        # Multi-lang mapping (European languages → English)
         ml_map = {
+            # Spanish
             'fecha/hora': 'date/time',
+            'fecha y hora': 'date/time',
             'id. de liquidación': 'settlement id',
+            'identificador de pago': 'settlement id',
             'tipo': 'type',
             'id. del pedido': 'order id',
+            'número de pedido': 'order id',
             'descripción': 'description',
             'cantidad': 'quantity',
             'cumplimiento': 'fulfillment',
+            'gestión logística': 'fulfillment',
+            'web de amazon': 'marketplace',
             'ciudad del pedido': 'order city',
+            'ciudad de procedencia del pedido': 'order city',
             'estado del pedido': 'order state',
+            'comunidad autónoma de procedencia del pedido': 'order state',
             'código postal del pedido': 'order postal',
+            'código postal de procedencia del pedido': 'order postal',
+            'formulario de recaudación de impuestos': 'tax collection model',
             'ventas de productos': 'product sales',
             'impuesto de ventas de productos': 'product sales tax',
             'créditos de envío': 'shipping credits',
+            'abonos de envío': 'shipping credits',
             'impuesto de abono de envío': 'shipping credits tax',
+            'impuestos por abonos de envío': 'shipping credits tax',
             'créditos por envoltorio de regalo': 'gift wrap credits',
+            'abonos de envoltorio para regalo': 'gift wrap credits',
             'impuesto de créditos de envoltura': 'giftwrap credits tax',
+            'impuestos por abonos de envoltorio para regalo': 'giftwrap credits tax',
             'tarifa reglamentaria': 'regulatory fee',
             'impuesto sobre tarifa reglamentaria': 'tax on regulatory fee',
             'descuentos promocionales': 'promotional rebates',
+            'devoluciones promocionales': 'promotional rebates',
             'impuesto de reembolsos promocionales': 'promotional rebates tax',
+            'impuestos de descuentos por promociones': 'promotional rebates tax',
             'impuesto de retenciones en la plataforma': 'marketplace withheld tax',
+            'impuesto retenido en el sitio web': 'marketplace withheld tax',
             'tarifas de venta': 'selling fees',
             'tarifas fba': 'fba fees',
+            'tarifas de logística de amazon': 'fba fees',
             'tarifas de otra transacción': 'other transaction fees',
+            'tarifas de otras transacciones': 'other transaction fees',
             'otro': 'other',
             'estado de la transacción': 'transaction status',
             'fecha de liberación de la transacción': 'transaction release date',
+            # German
+            'datum/uhrzeit': 'date/time',
+            'abrechnungsnummer': 'settlement id',
+            'typ': 'type',
+            'bestellnummer': 'order id',
+            'beschreibung': 'description',
+            'menge': 'quantity',
+            'versand': 'fulfillment',
+            'ort der bestellung': 'order city',
+            'bundesland': 'order state',
+            'postleitzahl': 'order postal',
+            'umsätze': 'product sales',
+            'produktumsatzsteuer': 'product sales tax',
+            'gutschrift für versandkosten': 'shipping credits',
+            'steuer auf versandgutschrift': 'shipping credits tax',
+            'gutschrift für geschenkverpackung': 'gift wrap credits',
+            'steuer auf geschenkverpackungsgutschriften': 'giftwrap credits tax',
+            'rabatte aus werbeaktionen': 'promotional rebates',
+            'steuer auf aktionsrabatte': 'promotional rebates tax',
+            'einbehaltene steuer auf marketplace': 'marketplace withheld tax',
+            'verkaufsgebühren': 'selling fees',
+            'gebühren zu versand durch amazon': 'fba fees',
+            'andere transaktionsgebühren': 'other transaction fees',
+            'andere': 'other',
+            'gesamt': 'total',
+            'transaktionsstatus': 'transaction status',
+            'freigabedatum der transaktion': 'transaction release date',
+            # French
+            'date/heure': 'date/time',
+            'numéro de versement': 'settlement id',
+            'identifiant du paiement': 'settlement id',
+            'type': 'type',
+            'numéro de la commande': 'order id',
+            'description': 'description',
+            'quantité': 'quantity',
+            'traitement': 'fulfillment',
+            'expédition': 'fulfillment',
+            'site de vente': 'marketplace',
+            "ville d'où provient la commande": 'order city',
+            'ville de la commande': 'order city',
+            "région d'où provient la commande": 'order state',
+            'état de la commande': 'order state',
+            'code postal de la commande': 'order postal',
+            'commande postale': 'order postal',
+            'ventes de produits': 'product sales',
+            'ventes de produits ': 'product sales',
+            'taxes sur la vente des produits': 'product sales tax',
+            "crédits d'expédition": 'shipping credits',
+            "crédits d'expédition ": 'shipping credits',
+            "taxe sur les crédits d'expédition": 'shipping credits tax',
+            "crédits sur l'emballage cadeau": 'gift wrap credits',
+            "crédits d'emballage-cadeau": 'gift wrap credits',
+            'taxes sur les crédits cadeaux': 'giftwrap credits tax',
+            'rabais promotionnels': 'promotional rebates',
+            'total des réductions': 'promotional rebates',
+            'taxes sur les remises promotionnelles': 'promotional rebates tax',
+            'taxes retenues sur le site de vente': 'marketplace withheld tax',
+            'frais de vente': 'selling fees',
+            'frais de vente ': 'selling fees',
+            'frais expédié par amazon': 'fba fees',
+            'frais pour le service expédié par amazon': 'fba fees',
+            'autres frais de transaction': 'other transaction fees',
+            'autre': 'other',
+            'autres': 'other',
+            'statut de la transaction': 'transaction status',
+            'date de sortie de la transaction': 'transaction release date',
+            'date de délivrance de la transaction': 'transaction release date',
+            # Italian
+            'data/ora': 'date/time',
+            'data/ora:': 'date/time',
+            'numero pagamento': 'settlement id',
+            'tipo': 'type',
+            'numero ordine': 'order id',
+            'descrizione': 'description',
+            'quantità': 'quantity',
+            'gestione': 'fulfillment',
+            "città di provenienza dell'ordine": 'order city',
+            "provincia di provenienza dell'ordine": 'order state',
+            "cap dell'ordine": 'order postal',
+            'vendite': 'product sales',
+            'imposta sulle vendite dei prodotti': 'product sales tax',
+            'accrediti per le spedizioni': 'shipping credits',
+            'imposta accrediti per le spedizioni': 'shipping credits tax',
+            'accrediti per confezioni regalo': 'gift wrap credits',
+            'imposta sui crediti confezione regalo': 'giftwrap credits tax',
+            'sconti promozionali': 'promotional rebates',
+            'imposta sugli sconti promozionali': 'promotional rebates tax',
+            'trattenuta iva del marketplace': 'marketplace withheld tax',
+            'commissioni di vendita': 'selling fees',
+            'costi del servizio logistica di amazon': 'fba fees',
+            'altri costi relativi alle transazioni': 'other transaction fees',
+            'altro': 'other',
+            'stato della transazione': 'transaction status',
+            'data di rilascio della transazione': 'transaction release date',
+            # Dutch
+            'datum/tijd': 'date/time',
+            'schikkings-id': 'settlement id',
+            'bestelnummer': 'order id',
+            'beschrijving': 'description',
+            'aantal': 'quantity',
+            'leverans': 'fulfillment',
+            'bestelling stad': 'order city',
+            'status bestelling': 'order state',
+            'bestelling per post': 'order postal',
+            'verkoop van producten': 'product sales',
+            'verzendtegoeden': 'shipping credits',
+            'kredietpunten cadeauverpakking': 'gift wrap credits',
+            'promotiekortingen': 'promotional rebates',
+            'verkoopkosten': 'selling fees',
+            'fba-vergoedingen': 'fba fees',
+            'overige transactiekosten': 'other transaction fees',
+            'overige': 'other',
+            'totaal': 'total',
+            'transactiestatus': 'transaction status',
+            'publicatiedatum van transactie': 'transaction release date',
+            # Swedish
+            'datum/tid': 'date/time',
+            'reglerings-id': 'settlement id',
+            'beställnings-id': 'order id',
+            'beskrivning': 'description',
+            'antal': 'quantity',
+            'stad för beställning': 'order city',
+            'delstat för beställning': 'order state',
+            'postadress för beställning': 'order postal',
+            'försäljning av produkter': 'product sales',
+            'fraktkrediter': 'shipping credits',
+            'krediter för presentinslagning': 'gift wrap credits',
+            'kampanjrabatter': 'promotional rebates',
+            'inkasserad moms': 'product sales tax',
+            'skatt för marknadsplatsförmedlare': 'marketplace withheld tax',
+            'försäljningsavgifter': 'selling fees',
+            'fba-avgifter': 'fba fees',
+            'övriga transaktionsavgifter': 'other transaction fees',
+            'övrigt': 'other',
+            'totalt': 'total',
+            'transaktionsstatus': 'transaction status',
+            'transaktionens utgivningsdatum': 'transaction release date',
         }
         mapped_headers = [ml_map.get(h, h) for h in headers]
         
@@ -1768,14 +2223,22 @@ def _process_csv_file(db, country_obj, store_id, filename, lines, import_year=No
         summary_count = 0
         sku_agg = {}
         adj_agg2 = {}  # Adjustment aggregation for Path 2
-        rate = _get_exchange_rate(db, country_obj, import_year, import_month)
+        rate = _get_exchange_rate(db, country_obj, import_year, import_month, store_id=store_id)
         
         for row in rows:
             sku = row.get('sku', '').strip()
             txn_type = row.get('type', '').strip()
-            if txn_type.lower() in ('pedido',): txn_type = 'Order'
-            elif txn_type.lower() in ('reembolso',): txn_type = 'Refund'
-            elif txn_type.lower() in ('ajuste',): txn_type = 'Adjustment'
+            _type_map_local = {
+                'pedido': 'Order', 'order': 'Order', 'bestellung': 'Order', 'commande': 'Order',
+                'ordine': 'Order', 'bestelling': 'Order', 'beställning': 'Order',
+                'reembolso': 'Refund', 'refund': 'Refund', 'erstattung': 'Refund',
+                'remboursement': 'Refund', 'rimborso': 'Refund', 'terugbetaling': 'Refund',
+                'återbetalning': 'Refund',
+                'ajuste': 'Adjustment', 'adjustment': 'Adjustment', 'anpassung': 'Adjustment',
+                'ajustement': 'Adjustment', 'aggiustamento': 'Adjustment', 'aanpassing': 'Adjustment',
+                'justering': 'Adjustment',
+            }
+            txn_type = _type_map_local.get(txn_type.lower(), txn_type)
 
             # Adjustment 处理
             if txn_type == 'Adjustment':
@@ -2012,6 +2475,7 @@ async def import_workbook(
         db.query(RawInbound).filter(RawInbound.store_id == store_obj.id).delete()
         db.query(RawLongTermStorage).filter(RawLongTermStorage.store_id == store_obj.id).delete()
         db.query(MonthlySummary).filter(MonthlySummary.store_id == store_obj.id).delete()
+        db.query(DimExchangeRate).filter(DimExchangeRate.store_id == store_obj.id).delete()
         db.flush()
 
         content = await file.read()
@@ -2020,14 +2484,18 @@ async def import_workbook(
         results = {}
 
         # ===== 识别所有 sheet 类型 =====
+        _txn_date_headers = ('date/time', 'date / time', 'fecha/hora', 'fecha y hora', 'datum/uhrzeit',
+                             'date/heure', 'data/ora', 'data/ora:', 'datum/tijd', 'datum/tid')
         def identify_sheet(header, rows):
             """返回 (sheet_type, header, rows)"""
-            if any("date/time" in h or "date / time" in h or "fecha/hora" in h for h in header):
+            if any(h in _txn_date_headers for h in header):
                 return "transaction", header, rows
-            if len(rows) > 9:
-                row10 = [str(h).strip().lower() if h else "" for h in rows[9]]
-                if any("date/time" in h or "product sales" in h or "fecha/hora" in h for h in row10):
-                    return "transaction", row10, rows[10:]
+            # Check row 10 (9 metadata rows) and row 9 (8 metadata rows, e.g. UAE)
+            for try_row in [9, 8]:
+                if len(rows) > try_row:
+                    row_h = [str(h).strip().lower() if h else "" for h in rows[try_row]]
+                    if any(h in _txn_date_headers for h in row_h) and 'sku' in row_h:
+                        return "transaction", row_h, rows[try_row + 1:]
             header_set = set(h for h in header if h)
             data_rows = rows[1:]
             if "asin" in header_set and any("成本" in h or "cost" in h for h in header):
@@ -2044,6 +2512,9 @@ async def import_workbook(
                 if any("surcharge" in h or "snapshot" in h for h in header):
                     return "long_term_storage", header, data_rows
                 return "storage", header, data_rows
+            # 汇率表：含"国家"和"汇率"列
+            if "汇率" in header and ("国家" in header or "country" in header):
+                return "exchange_rate", header, data_rows
             return None, header, data_rows
 
         # 解析所有 sheet
@@ -2071,11 +2542,29 @@ async def import_workbook(
                 detected = _detect_country_from_data(db, header, rows)
                 if not detected:
                     # 从 sheet 名称推断
-                    sn = sheet_name.upper()
-                    if 'CA' in sn and 'MX' not in sn: detected = 'CA'
-                    elif 'MX' in sn: detected = 'MX'
-                    elif 'NA' in sn or 'US' in sn: detected = 'US'
-                    else: detected = 'US'  # default
+                    sn = sheet_name
+                    sn_upper = sn.upper()
+                    _sheet_country_kw = {
+                        '英国': 'UK', 'UK': 'UK',
+                        '德国': 'DE', 'DE': 'DE',
+                        '法国': 'FR', 'FR': 'FR',
+                        '西班牙': 'ES', 'ES': 'ES',
+                        '意大利': 'IT', 'IT': 'IT',
+                        '荷兰': 'NL', 'NL': 'NL',
+                        '瑞典': 'SE', 'SE': 'SE',
+                        '比利时': 'BE', 'BE': 'BE',
+                        '爱尔兰': 'IE', 'IE': 'IE',
+                        '阿联酋': 'AE', 'AE': 'AE',
+                        '沙特': 'SA', 'SA': 'SA',
+                    }
+                    for kw, cc in _sheet_country_kw.items():
+                        if kw in sn or kw in sn_upper:
+                            detected = cc; break
+                    if not detected:
+                        if 'CA' in sn_upper and 'MX' not in sn_upper: detected = 'CA'
+                        elif 'MX' in sn_upper: detected = 'MX'
+                        elif 'NA' in sn_upper or 'US' in sn_upper: detected = 'US'
+                        else: detected = 'US'  # default
                 sheet_countries[sheet_name] = detected
 
         # 汇总所有涉及的国家
@@ -2087,6 +2576,49 @@ async def import_workbook(
                 country_objs[cc] = co
             else:
                 results[f"_country_{cc}"] = {"status": "error", "detail": f"国家 {cc} 不存在于 dim_country"}
+
+        # ===== 第零轮：汇率表（优先导入，后续计算利润需要）=====
+        for sheet_name, (stype, header, rows) in sheets.items():
+            if stype != "exchange_rate":
+                continue
+            try:
+                # 解析列索引
+                country_idx = next(i for i, h in enumerate(header) if h in ("国家", "country"))
+                rate_idx = next(i for i, h in enumerate(header) if h == "汇率")
+                # 确定月份：优先用传入参数，否则取当前月
+                ym = None
+                if import_year and import_month:
+                    ym = f"{import_year}-{import_month:02d}"
+                else:
+                    from datetime import date
+                    today = date.today()
+                    ym = f"{today.year}-{today.month:02d}"
+                imported = 0
+                for row in rows:
+                    cc = str(row[country_idx] or "").strip().upper()
+                    rate = row[rate_idx]
+                    if not cc or rate is None:
+                        continue
+                    co = db.query(DimCountry).filter(DimCountry.code == cc).first()
+                    if not co:
+                        continue
+                    from decimal import Decimal as _D
+                    rate_val = _D(str(rate))
+                    # upsert: 查找已有记录（按店铺+国家+月份）
+                    existing = db.query(DimExchangeRate).filter(
+                        DimExchangeRate.country_id == co.id,
+                        DimExchangeRate.year_month == ym,
+                        DimExchangeRate.store_id == store_obj.id,
+                    ).first()
+                    if existing:
+                        existing.rate = rate_val
+                    else:
+                        db.add(DimExchangeRate(country_id=co.id, year_month=ym, rate=rate_val, store_id=store_obj.id))
+                    imported += 1
+                db.flush()
+                results[sheet_name] = {"status": "success", "type": "exchange_rate", "month": ym, "imported": imported}
+            except Exception as e:
+                results[sheet_name] = {"status": "error", "type": "exchange_rate", "detail": str(e)}
 
         # ===== 第一轮：先产品信息，再交易记录（确保SKU匹配）=====
         product_info_sheets = [(n, h, r) for n, (t, h, r) in sheets.items() if t == "product_info"]
@@ -2115,7 +2647,7 @@ async def import_workbook(
 
         # ===== 补建所有产品的 summary（确保广告/仓储等数据有记录可更新）=====
         for cc, co in country_objs.items():
-            _ensure_all_products_have_summary(db, co, store_id=store_obj.id)
+            _ensure_all_products_have_summary(db, co, store_id=store_obj.id, import_year=import_year, import_month=import_month)
         db.commit()
 
         # ===== 第二轮：广告/退货/入库/仓储（更新已有的 summary）=====
@@ -2129,15 +2661,15 @@ async def import_workbook(
                 continue
             try:
                 if stype == "advertising":
-                    result = _process_advertising_sheet(db, co, header, rows, store_id=store_obj.id)
+                    result = _process_advertising_sheet(db, co, header, rows, store_id=store_obj.id, import_year=import_year, import_month=import_month)
                 elif stype == "returns":
-                    result = _process_fee_sheet(db, co, header, rows, "returns", store_id=store_obj.id)
+                    result = _process_fee_sheet(db, co, header, rows, "returns", store_id=store_obj.id, import_year=import_year, import_month=import_month)
                 elif stype == "inbound":
-                    result = _process_fee_sheet(db, co, header, rows, "inbound", store_id=store_obj.id)
+                    result = _process_fee_sheet(db, co, header, rows, "inbound", store_id=store_obj.id, import_year=import_year, import_month=import_month)
                 elif stype == "storage":
-                    result = _process_fee_sheet(db, co, header, rows, "storage", store_id=store_obj.id)
+                    result = _process_fee_sheet(db, co, header, rows, "storage", store_id=store_obj.id, import_year=import_year, import_month=import_month)
                 elif stype == "long_term_storage":
-                    result = _process_fee_sheet(db, co, header, rows, "long_term_storage", store_id=store_obj.id)
+                    result = _process_fee_sheet(db, co, header, rows, "long_term_storage", store_id=store_obj.id, import_year=import_year, import_month=import_month)
                 results[sheet_name] = {"status": "success", "type": stype, "country": cc, **result}
             except Exception as e:
                 results[sheet_name] = {"status": "error", "type": stype, "country": cc, "detail": str(e)}
@@ -2201,20 +2733,137 @@ def _find_col(header, *names):
     return None
 
 
+def _parse_eu_number(value):
+    """解析欧洲格式数字：30,24→30.24 / 1 135,72→1135.72 / 1,777.43→1777.43 / 30.24→30.24"""
+    if value is None:
+        return Decimal("0")
+    s = str(value).strip()
+    if not s or s == '-' or s == '−':
+        return Decimal("0")
+    # Remove currency symbols
+    s = s.replace('€', '').replace('$', '').replace('£', '').replace('%', '').strip()
+    # Detect format: if has comma followed by 1-2 digits at end → European decimal
+    import re
+    if re.search(r',\d{1,2}$', s):
+        # European format: "30,24" or "1 135,72" or "-28,22"
+        s = s.replace(' ', '').replace('.', '').replace(',', '.')
+    elif ',' in s and re.search(r',\d{3}', s):
+        # US thousands: "1,777.43"
+        s = s.replace(',', '')
+    else:
+        # Already dot format or no separator
+        s = s.replace(',', '')
+    try:
+        return Decimal(s)
+    except:
+        return Decimal("0")
+
+
 def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, import_year=None, import_month=None):
     """处理交易记录 sheet，import_year/month 覆盖文件中时间"""
-    col_date = _find_col(header, "date/time", "date / time", "fecha/hora")
-    col_type = _find_col(header, "type", "tipo")
-    col_order = _find_col(header, "order id", "id. del pedido")
+    # Normalize multi-language headers to English
+    _header_normalize = {
+        'datum/uhrzeit': 'date/time', 'date/heure': 'date/time', 'data/ora': 'date/time',
+        'data/ora:': 'date/time', 'datum/tijd': 'date/time', 'datum/tid': 'date/time',
+        'fecha/hora': 'date/time', 'fecha y hora': 'date/time',
+        'typ': 'type', 'tipo': 'type',
+        'abrechnungsnummer': 'settlement id', 'numéro de versement': 'settlement id',
+        'identifiant du paiement': 'settlement id',
+        'numero pagamento': 'settlement id', 'schikkings-id': 'settlement id', 'reglerings-id': 'settlement id',
+        'id. de liquidación': 'settlement id', 'identificador de pago': 'settlement id',
+        'bestellnummer': 'order id', 'numéro de la commande': 'order id', 'numero ordine': 'order id',
+        'bestelnummer': 'order id', 'beställnings-id': 'order id', 'id. del pedido': 'order id',
+        'número de pedido': 'order id',
+        'beschreibung': 'description', 'descripción': 'description', 'descrizione': 'description',
+        'beschrijving': 'description', 'beskrivning': 'description',
+        'menge': 'quantity', 'cantidad': 'quantity', 'quantité': 'quantity', 'quantità': 'quantity', 'aantal': 'quantity', 'antal': 'quantity',
+        'versand': 'fulfillment', 'cumplimiento': 'fulfillment', 'traitement': 'fulfillment',
+        'expédition': 'fulfillment', 'gestión logística': 'fulfillment',
+        'gestione': 'fulfillment', 'leverans': 'fulfillment',
+        'ort der bestellung': 'order city', "ville d'où provient la commande": 'order city',
+        "città di provenienza dell'ordine": 'order city', 'bestelling stad': 'order city',
+        'stad för beställning': 'order city', 'ciudad del pedido': 'order city',
+        'ville de la commande': 'order city', 'ciudad de procedencia del pedido': 'order city',
+        'marknadsplats': 'marketplace', 'web de amazon': 'marketplace', 'site de vente': 'marketplace',
+        'formulario de recaudación de impuestos': 'tax collection model',
+        'bundesland': 'order state', "région d'où provient la commande": 'order state',
+        'état de la commande': 'order state', 'comunidad autónoma de procedencia del pedido': 'order state',
+        "provincia di provenienza dell'ordine": 'order state', 'status bestelling': 'order state',
+        'delstat för beställning': 'order state', 'estado del pedido': 'order state',
+        'postleitzahl': 'order postal', 'code postal de la commande': 'order postal',
+        'commande postale': 'order postal', 'código postal de procedencia del pedido': 'order postal',
+        "cap dell'ordine": 'order postal', 'bestelling per post': 'order postal',
+        'postadress för beställning': 'order postal', 'código postal del pedido': 'order postal',
+        'umsätze': 'product sales', 'ventes de produits': 'product sales', 'ventas de productos': 'product sales',
+        'vendite': 'product sales', 'verkoop van producten': 'product sales',
+        'försäljning av produkter': 'product sales',
+        'produktumsatzsteuer': 'product sales tax', 'impuesto de ventas de productos': 'product sales tax',
+        'taxes sur la vente des produits': 'product sales tax', 'imposta sulle vendite dei prodotti': 'product sales tax',
+        'gutschrift für versandkosten': 'shipping credits', "crédits d'expédition": 'shipping credits',
+        "crédits d'expédition ": 'shipping credits',
+        'abonos de envío': 'shipping credits', 'accrediti per le spedizioni': 'shipping credits',
+        'verzendtegoeden': 'shipping credits', 'fraktkrediter': 'shipping credits',
+        'steuer auf versandgutschrift': 'shipping credits tax', 'impuesto de abono de envío': 'shipping credits tax',
+        'impuestos por abonos de envío': 'shipping credits tax',
+        'imposta accrediti per le spedizioni': 'shipping credits tax',
+        'gutschrift für geschenkverpackung': 'gift wrap credits', "crédits sur l'emballage cadeau": 'gift wrap credits',
+        "crédits d'emballage-cadeau": 'gift wrap credits',
+        'créditos por envoltorio de regalo': 'gift wrap credits', 'abonos de envoltorio para regalo': 'gift wrap credits',
+        'accrediti per confezioni regalo': 'gift wrap credits',
+        'kredietpunten cadeauverpakking': 'gift wrap credits', 'krediter för presentinslagning': 'gift wrap credits',
+        'steuer auf geschenkverpackungsgutschriften': 'giftwrap credits tax',
+        'taxes sur les crédits cadeaux': 'giftwrap credits tax', 'imposta sui crediti confezione regalo': 'giftwrap credits tax',
+        'impuesto de créditos de envoltura': 'giftwrap credits tax',
+        'impuestos por abonos de envoltorio para regalo': 'giftwrap credits tax',
+        'rabatte aus werbeaktionen': 'promotional rebates', 'rabais promotionnels': 'promotional rebates',
+        'total des réductions': 'promotional rebates',
+        'descuentos promocionales': 'promotional rebates', 'devoluciones promocionales': 'promotional rebates',
+        'sconti promozionali': 'promotional rebates',
+        'promotiekortingen': 'promotional rebates', 'kampanjrabatter': 'promotional rebates',
+        'steuer auf aktionsrabatte': 'promotional rebates tax', 'taxes sur les remises promotionnelles': 'promotional rebates tax',
+        'impuesto de reembolsos promocionales': 'promotional rebates tax',
+        'impuestos de descuentos por promociones': 'promotional rebates tax',
+        'imposta sugli sconti promozionali': 'promotional rebates tax',
+        'einbehaltene steuer auf marketplace': 'marketplace withheld tax',
+        'taxes retenues sur le site de vente': 'marketplace withheld tax',
+        'impuesto de retenciones en la plataforma': 'marketplace withheld tax',
+        'impuesto retenido en el sitio web': 'marketplace withheld tax',
+        'trattenuta iva del marketplace': 'marketplace withheld tax',
+        'verkaufsgebühren': 'selling fees', 'frais de vente': 'selling fees', 'tarifas de venta': 'selling fees',
+        'commissioni di vendita': 'selling fees', 'verkoopkosten': 'selling fees', 'försäljningsavgifter': 'selling fees',
+        'gebühren zu versand durch amazon': 'fba fees', 'frais expédié par amazon': 'fba fees',
+        'frais pour le service expédié par amazon': 'fba fees',
+        'tarifas fba': 'fba fees', 'tarifas de logística de amazon': 'fba fees',
+        'costi del servizio logistica di amazon': 'fba fees',
+        'fba-vergoedingen': 'fba fees', 'fba-avgifter': 'fba fees',
+        'andere transaktionsgebühren': 'other transaction fees', 'autres frais de transaction': 'other transaction fees',
+        'tarifas de otra transacción': 'other transaction fees', 'tarifas de otras transacciones': 'other transaction fees',
+        'altri costi relativi alle transazioni': 'other transaction fees',
+        'overige transactiekosten': 'other transaction fees', 'övriga transaktionsavgifter': 'other transaction fees',
+        'andere': 'other', 'autre': 'other', 'autres': 'other', 'otro': 'other', 'altro': 'other', 'overige': 'other', 'övrigt': 'other',
+        'gesamt': 'total', 'totaal': 'total', 'totalt': 'total',
+        'transaktionsstatus': 'transaction status', 'statut de la transaction': 'transaction status',
+        'estado de la transacción': 'transaction status', 'stato della transazione': 'transaction status',
+        'transactiestatus': 'transaction status', 'transaktionens utgivningsdatum': 'transaction release date',
+        'freigabedatum der transaktion': 'transaction release date', 'date de sortie de la transaction': 'transaction release date',
+        'date de délivrance de la transaction': 'transaction release date',
+        'fecha de liberación de la transacción': 'transaction release date',
+        'data di rilascio della transazione': 'transaction release date',
+        'publicatiedatum van transactie': 'transaction release date',
+    }
+    header = [_header_normalize.get(h, h) for h in header]
+    col_date = _find_col(header, "date/time", "date / time")
+    col_type = _find_col(header, "type")
+    col_order = _find_col(header, "order id")
     col_sku = _find_col(header, "sku")
-    col_desc = _find_col(header, "description", "descripción")
-    col_qty = _find_col(header, "quantity", "cantidad")
-    col_ps = _find_col(header, "product sales", "ventas de productos")
-    col_sf = _find_col(header, "selling fees", "tarifas de venta")
-    col_fba = _find_col(header, "fba fees", "tarifas fba")
+    col_desc = _find_col(header, "description")
+    col_qty = _find_col(header, "quantity")
+    col_ps = _find_col(header, "product sales")
+    col_sf = _find_col(header, "selling fees")
+    col_fba = _find_col(header, "fba fees")
     col_total = _find_col(header, "total")
     col_marketplace = _find_col(header, "marketplace")
-    col_fulfillment = _find_col(header, "fulfillment", "cumplimiento")
+    col_fulfillment = _find_col(header, "fulfillment")
 
     if col_date is None or col_ps is None:
         return {"raw_rows": 0, "summary_rows": 0, "error": "缺少必要列"}
@@ -2222,28 +2871,28 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
     sku_aggregation = {}
     adj_aggregation3 = {}  # Adjustment aggregation for Path 3
     raw_count = 0
-    exchange_rate = _get_exchange_rate(db, country_obj, import_year, import_month)
+    exchange_rate = _get_exchange_rate(db, country_obj, import_year, import_month, store_id=store_id)
 
     # 查找额外列的索引
-    col_settlement = _find_col(header, "settlement id", "id. de liquidación")
-    col_city = _find_col(header, "order city", "ciudad del pedido")
-    col_state = _find_col(header, "order state", "estado del pedido")
-    col_postal = _find_col(header, "order postal", "código postal del pedido")
-    col_tax_model = _find_col(header, "tax collection model", "modelo de recaudación de impuestos")
-    col_ps_tax = _find_col(header, "product sales tax", "impuesto de ventas de productos")
-    col_ship_credit = _find_col(header, "shipping credits", "créditos de envío")
-    col_ship_credit_tax = _find_col(header, "shipping credits tax", "impuesto de abono de envío")
-    col_gift = _find_col(header, "gift wrap credits", "créditos por envoltorio de regalo")
-    col_gift_tax = _find_col(header, "giftwrap credits tax", "impuesto de créditos de envoltura")
-    col_reg_fee = _find_col(header, "regulatory fee", "tarifa reglamentaria")
-    col_reg_tax = _find_col(header, "tax on regulatory fee", "impuesto sobre tarifa reglamentaria")
-    col_promo = _find_col(header, "promotional rebates", "descuentos promocionales")
-    col_promo_tax = _find_col(header, "promotional rebates tax", "impuesto de reembolsos promocionales")
-    col_mkt_tax = _find_col(header, "marketplace withheld tax", "impuesto de retenciones en la plataforma")
-    col_other_fee = _find_col(header, "other transaction fees", "tarifas de otra transacción")
-    col_other = _find_col(header, "other", "otro")
-    col_status = _find_col(header, "status", "transaction status", "estado de la transacción")
-    col_release = _find_col(header, "release date", "transaction release date", "fecha de liberación de la transacción")
+    col_settlement = _find_col(header, "settlement id")
+    col_city = _find_col(header, "order city")
+    col_state = _find_col(header, "order state")
+    col_postal = _find_col(header, "order postal")
+    col_tax_model = _find_col(header, "tax collection model")
+    col_ps_tax = _find_col(header, "product sales tax")
+    col_ship_credit = _find_col(header, "shipping credits")
+    col_ship_credit_tax = _find_col(header, "shipping credits tax")
+    col_gift = _find_col(header, "gift wrap credits")
+    col_gift_tax = _find_col(header, "giftwrap credits tax")
+    col_reg_fee = _find_col(header, "regulatory fee")
+    col_reg_tax = _find_col(header, "tax on regulatory fee")
+    col_promo = _find_col(header, "promotional rebates")
+    col_promo_tax = _find_col(header, "promotional rebates tax")
+    col_mkt_tax = _find_col(header, "marketplace withheld tax")
+    col_other_fee = _find_col(header, "other transaction fees")
+    col_other = _find_col(header, "other")
+    col_status = _find_col(header, "status", "transaction status")
+    col_release = _find_col(header, "release date", "transaction release date")
 
     for row in rows:
         if not row or len(row) <= col_date:
@@ -2262,11 +2911,16 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
             continue
 
         txn_type = str(row[col_type]).strip() if col_type is not None and row[col_type] else ""
-        # 西班牙语类型映射
+        # 多语言类型映射
         _type_map = {
             'pedido': 'Order', 'reembolso': 'Refund',
             'order': 'Order', 'refund': 'Refund',
             'ajuste': 'Adjustment', 'adjustment': 'Adjustment',
+            'bestellung': 'Order', 'erstattung': 'Refund', 'anpassung': 'Adjustment',
+            'commande': 'Order', 'remboursement': 'Refund', 'ajustement': 'Adjustment',
+            'ordine': 'Order', 'rimborso': 'Refund', 'aggiustamento': 'Adjustment',
+            'bestelling': 'Order', 'terugbetaling': 'Refund', 'aanpassing': 'Adjustment',
+            'beställning': 'Order', 'återbetalning': 'Refund', 'justering': 'Adjustment',
         }
         txn_type = _type_map.get(txn_type.lower(), txn_type)
         sku = str(row[col_sku]).strip() if col_sku is not None and row[col_sku] else ""
@@ -2277,11 +2931,11 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
         real_sku = _extract_real_sku(sku) if is_replacement else None
         effective_sku = real_sku if real_sku else sku
 
-        product_sales = _safe_decimal(row[col_ps] if col_ps is not None else 0)
-        selling_fee = _safe_decimal(row[col_sf] if col_sf is not None else 0)
-        fba_fee = _safe_decimal(row[col_fba] if col_fba is not None else 0)
+        product_sales = _parse_eu_number(row[col_ps] if col_ps is not None else 0)
+        selling_fee = _parse_eu_number(row[col_sf] if col_sf is not None else 0)
+        fba_fee = _parse_eu_number(row[col_fba] if col_fba is not None else 0)
         quantity = _safe_int(row[col_qty] if col_qty is not None else 0)
-        total = _safe_decimal(row[col_total] if col_total is not None else 0)
+        total = _parse_eu_number(row[col_total] if col_total is not None else 0)
 
         # 所有类型都写 raw_transactions
         raw = RawTransaction(
@@ -2301,20 +2955,20 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
             order_postal=str(row[col_postal]).strip() if col_postal is not None and row[col_postal] else "",
             tax_collection_model=str(row[col_tax_model]).strip() if col_tax_model is not None and row[col_tax_model] else "",
             product_sales=product_sales,
-            product_sales_tax=_safe_decimal(row[col_ps_tax] if col_ps_tax is not None else 0),
-            shipping_credits=_safe_decimal(row[col_ship_credit] if col_ship_credit is not None else 0),
-            shipping_credits_tax=_safe_decimal(row[col_ship_credit_tax] if col_ship_credit_tax is not None else 0),
-            gift_wrap_credits=_safe_decimal(row[col_gift] if col_gift is not None else 0),
-            giftwrap_credits_tax=_safe_decimal(row[col_gift_tax] if col_gift_tax is not None else 0),
-            regulatory_fee=_safe_decimal(row[col_reg_fee] if col_reg_fee is not None else 0),
-            tax_on_regulatory_fee=_safe_decimal(row[col_reg_tax] if col_reg_tax is not None else 0),
-            promotional_rebates=_safe_decimal(row[col_promo] if col_promo is not None else 0),
-            promotional_rebates_tax=_safe_decimal(row[col_promo_tax] if col_promo_tax is not None else 0),
-            marketplace_withheld_tax=_safe_decimal(row[col_mkt_tax] if col_mkt_tax is not None else 0),
+            product_sales_tax=_parse_eu_number(row[col_ps_tax] if col_ps_tax is not None else 0),
+            shipping_credits=_parse_eu_number(row[col_ship_credit] if col_ship_credit is not None else 0),
+            shipping_credits_tax=_parse_eu_number(row[col_ship_credit_tax] if col_ship_credit_tax is not None else 0),
+            gift_wrap_credits=_parse_eu_number(row[col_gift] if col_gift is not None else 0),
+            giftwrap_credits_tax=_parse_eu_number(row[col_gift_tax] if col_gift_tax is not None else 0),
+            regulatory_fee=_parse_eu_number(row[col_reg_fee] if col_reg_fee is not None else 0),
+            tax_on_regulatory_fee=_parse_eu_number(row[col_reg_tax] if col_reg_tax is not None else 0),
+            promotional_rebates=_parse_eu_number(row[col_promo] if col_promo is not None else 0),
+            promotional_rebates_tax=_parse_eu_number(row[col_promo_tax] if col_promo_tax is not None else 0),
+            marketplace_withheld_tax=_parse_eu_number(row[col_mkt_tax] if col_mkt_tax is not None else 0),
             selling_fee=selling_fee,
             fba_fee=fba_fee,
-            other_transaction_fee=_safe_decimal(row[col_other_fee] if col_other_fee is not None else 0),
-            other_amount=_safe_decimal(row[col_other] if col_other is not None else 0),
+            other_transaction_fee=_parse_eu_number(row[col_other_fee] if col_other_fee is not None else 0),
+            other_amount=_parse_eu_number(row[col_other] if col_other is not None else 0),
             total=total,
             transaction_status=str(row[col_status]).strip() if col_status is not None and row[col_status] else "",
             transaction_release_date=_detect_date_format(str(row[col_release])) if col_release is not None and row[col_release] else None,
@@ -2346,11 +3000,11 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
             sku_aggregation[key] = {"product_sales": Decimal("0"), "selling_fee": Decimal("0"), "fba_fee": Decimal("0"), "quantity": 0, "order_qty": 0, "promo_rebate": Decimal("0"), "promo_rebate_tax": Decimal("0"), "marketplace_withheld_tax": Decimal("0")}
         agg = sku_aggregation[key]
         # 总收入 = product_sales + shipping_credits + gift_wrap_credits（不含 promotional_rebates）
-        shipping = _safe_decimal(row[col_ship_credit] if col_ship_credit is not None else 0)
-        promo = _safe_decimal(row[col_promo] if col_promo is not None else 0)
-        promo_tax = _safe_decimal(row[col_promo_tax] if col_promo_tax is not None else 0)
-        mkt_tax = _safe_decimal(row[col_mkt_tax] if col_mkt_tax is not None else 0)
-        gift = _safe_decimal(row[col_gift] if col_gift is not None else 0)
+        shipping = _parse_eu_number(row[col_ship_credit] if col_ship_credit is not None else 0)
+        promo = _parse_eu_number(row[col_promo] if col_promo is not None else 0)
+        promo_tax = _parse_eu_number(row[col_promo_tax] if col_promo_tax is not None else 0)
+        mkt_tax = _parse_eu_number(row[col_mkt_tax] if col_mkt_tax is not None else 0)
+        gift = _parse_eu_number(row[col_gift] if col_gift is not None else 0)
         total_revenue = product_sales + shipping + gift
         agg["product_sales"] += total_revenue
         agg["promo_rebate"] += promo
@@ -2498,8 +3152,8 @@ def _process_product_info_sheet(db, header, rows, import_year=None, import_month
     return {"rows": count}
 
 
-def _process_advertising_sheet(db, country_obj, header, rows, time_id=None, store_id=None):
-    """处理广告 sheet，自动从行的 time 列解析月份，忽略 time_id 参数"""
+def _process_advertising_sheet(db, country_obj, header, rows, time_id=None, store_id=None, import_year=None, import_month=None):
+    """处理广告 sheet，使用导入时选择的年月"""
     col_product = _find_col(header, "商品", "asin")
     col_spend = _find_col(header, "花费(usd)", "花费(cad)", "花费(mx)", "花费")
     col_sales = _find_col(header, "销售额(usd)", "销售额(cad)", "销售额(mx)", "销售额")
@@ -2526,7 +3180,6 @@ def _process_advertising_sheet(db, country_obj, header, rows, time_id=None, stor
 
     ad_agg = {}  # key: (asin, year, month)
     row_count = 0
-    import re as _re
 
     for row in rows:
         if not row or not row[col_product]:
@@ -2535,24 +3188,8 @@ def _process_advertising_sheet(db, country_obj, header, rows, time_id=None, stor
         product_field = str(row[col_product]).strip()
         asin = product_field.split("-")[0]
 
-        # 解析 time 列
-        ad_year, ad_month = None, None
-        if col_time is not None and row[col_time]:
-            time_str = str(row[col_time]).strip()
-            m = _re.search(r'(\d{4})[/\-](\d{1,2})', time_str)
-            if m:
-                ad_year = int(m.group(1))
-                ad_month = int(m.group(2))
-            else:
-                m = _re.search(r'(\w+)[\-/](\d{2,4})', time_str)
-                if m:
-                    month_map = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
-                                 "jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
-                    month_str = m.group(1).lower()[:3]
-                    year_str = m.group(2)
-                    if month_str in month_map:
-                        ad_month = month_map[month_str]
-                        ad_year = int(year_str) if len(year_str) == 4 else int("20" + year_str) if len(year_str) == 2 else None
+        # 使用导入时选择的年月，不从数据中解析
+        ad_year, ad_month = import_year, import_month
 
         ad_spend = _safe_decimal(row[col_spend]) if col_spend is not None else Decimal("0")
         ad_sales = _safe_decimal(row[col_sales]) if col_sales is not None else Decimal("0")
@@ -2608,7 +3245,7 @@ def _process_advertising_sheet(db, country_obj, header, rows, time_id=None, stor
         if not product:
             continue
 
-        exchange_rate = _get_exchange_rate(db, country_obj, ad_year, ad_month)
+        exchange_rate = _get_exchange_rate(db, country_obj, ad_year, ad_month, store_id=store_id)
 
         # 确定目标月份
         if ad_year and ad_month:
@@ -2618,20 +3255,18 @@ def _process_advertising_sheet(db, country_obj, header, rows, time_id=None, stor
                 MonthlySummary.product_id == product.id,
                 MonthlySummary.country_id == country_obj.id,
                 MonthlySummary.time_id == time_id,
+                MonthlySummary.store_id == store_id,
+            ).first() if store_id else db.query(MonthlySummary).filter(
+                MonthlySummary.product_id == product.id,
+                MonthlySummary.country_id == country_obj.id,
+                MonthlySummary.time_id == time_id,
             ).first()
             if not summary:
-                summary = MonthlySummary(
-                    country_id=country_obj.id,
-                    product_id=product.id,
-                    time_id=time_id,
-                    order_count=0, order_qty=0,
-                    product_sales_usd=Decimal("0"), commission_usd=Decimal("0"), fba_fee_usd=Decimal("0"),
-                    ad_spend_usd=Decimal("0"), storage_fee_usd=Decimal("0"), returns_fee_usd=Decimal("0"), inbound_fee_usd=Decimal("0"),
-                )
-                db.add(summary)
+                # 没有交易数据的月份不创建 summary
+                continue
             target_summaries = [summary]
         else:
-            # 无时间信息，更新该国家所有月份（必须加 country_id 过滤！）
+            # 无时间信息，更新该国家所有月份
             target_summaries = db.query(MonthlySummary).filter(
                 MonthlySummary.product_id == product.id,
                 MonthlySummary.country_id == country_obj.id,
@@ -2653,8 +3288,8 @@ def _process_advertising_sheet(db, country_obj, header, rows, time_id=None, stor
     return {"csv_rows": row_count, "summary_updated": summary_count}
 
 
-def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None):
-    """处理费用类 sheet（仓储/退货/入库/长期仓储），按行识别国家"""
+def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None, import_year=None, import_month=None):
+    """处理费用类 sheet（仓储/退货/入库/长期仓储），使用导入时选择的年月"""
     col_asin = _find_col(header, "asin")
     col_fee = None
 
@@ -2692,6 +3327,8 @@ def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None):
 
     asin_fees = {}  # (country_id, asin, month_str) -> Decimal
     row_count = 0
+    # 使用导入时选择的年月，不从数据中解析
+    _import_ym = f"{import_year}-{import_month:02d}" if import_year and import_month else None
     col_moc = _find_col(header, "month_of_charge", "交易日期", "snapshot-date")
 
     for row in rows:
@@ -2705,12 +3342,8 @@ def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None):
         # 按行确定国家
         row_country = _get_row_country(row)
 
-        # 确定月份
-        month_str = ""
-        if col_moc is not None and row[col_moc]:
-            raw_moc = str(row[col_moc]).strip()
-            if len(raw_moc) >= 7:
-                month_str = raw_moc[:7]
+        # 确定月份：使用导入时选择的年月
+        month_str = _import_ym or ""
 
         # 写入对应的 raw 表
         if fee_type == "storage":
@@ -2845,15 +3478,15 @@ def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None):
                 MonthlySummary.product_id == product.id,
                 MonthlySummary.country_id == fee_country_id,
                 MonthlySummary.time_id == time_obj.id,
+                MonthlySummary.store_id == store_id,
+            ).first() if store_id else db.query(MonthlySummary).filter(
+                MonthlySummary.product_id == product.id,
+                MonthlySummary.country_id == fee_country_id,
+                MonthlySummary.time_id == time_obj.id,
             ).first()
             if not summary:
-                summary = MonthlySummary(
-                    country_id=fee_country_id, product_id=product.id, time_id=time_obj.id,
-                    order_count=0, order_qty=0,
-                    product_sales_usd=Decimal("0"), commission_usd=Decimal("0"), fba_fee_usd=Decimal("0"),
-                    ad_spend_usd=Decimal("0"), storage_fee_usd=Decimal("0"), returns_fee_usd=Decimal("0"), inbound_fee_usd=Decimal("0"),
-                )
-                db.add(summary)
+                # 没有交易数据的月份不创建 summary
+                continue
             target_summaries = [summary]
         else:
             # 没有月份信息，更新该国家所有月份
@@ -2874,11 +3507,11 @@ def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None):
     return {"csv_rows": row_count, "summary_updated": summary_count}
 
 
-def _ensure_all_products_have_summary(db, country_obj, store_id=None):
-    """为有实际原始数据的产品补建缺失月份的 monthly_summary 记录"""
-    all_times = db.query(DimTime).all()
-    if not all_times:
+def _ensure_all_products_have_summary(db, country_obj, store_id=None, import_year=None, import_month=None):
+    """为有实际原始数据的产品补建指定月份的 monthly_summary 记录"""
+    if not import_year or not import_month:
         return
+    time_obj = _get_or_create_time(db, import_year, import_month)
     all_products = db.query(DimProduct).filter(
         DimProduct.asin.notlike("Amazon.%")
     ).all()
@@ -2895,33 +3528,30 @@ def _ensure_all_products_have_summary(db, country_obj, store_id=None):
             ).first()
         if not has_data:
             continue
-        # 获取已有记录的月份ID集合
-        existing_ids = set(
-            r[0] for r in db.query(MonthlySummary.time_id).filter(
-                MonthlySummary.product_id == product.id,
-                MonthlySummary.country_id == country_obj.id,
-            ).all()
+        # 检查是否已有记录
+        existing = db.query(MonthlySummary).filter(
+            MonthlySummary.product_id == product.id,
+            MonthlySummary.country_id == country_obj.id,
+            MonthlySummary.time_id == time_obj.id,
+        ).first()
+        if existing:
+            continue
+        summary = MonthlySummary(
+            country_id=country_obj.id,
+            product_id=product.id,
+            time_id=time_obj.id,
+            store_id=store_id,
+            order_count=0,
+            order_qty=0,
+            product_sales_usd=Decimal("0"),
+            commission_usd=Decimal("0"),
+            fba_fee_usd=Decimal("0"),
+            ad_spend_usd=Decimal("0"),
+            storage_fee_usd=Decimal("0"),
+            returns_fee_usd=Decimal("0"),
+            inbound_fee_usd=Decimal("0"),
         )
-        # 为缺失的月份补建记录
-        for time_obj in all_times:
-            if time_obj.id in existing_ids:
-                continue
-            summary = MonthlySummary(
-                country_id=country_obj.id,
-                product_id=product.id,
-                time_id=time_obj.id,
-                store_id=store_id,
-                order_count=0,
-                order_qty=0,
-                product_sales_usd=Decimal("0"),
-                commission_usd=Decimal("0"),
-                fba_fee_usd=Decimal("0"),
-                ad_spend_usd=Decimal("0"),
-                storage_fee_usd=Decimal("0"),
-                returns_fee_usd=Decimal("0"),
-                inbound_fee_usd=Decimal("0"),
-            )
-            db.add(summary)
+        db.add(summary)
     db.flush()
 
 
@@ -2967,6 +3597,14 @@ def _recalculate_all_profit(db, country_obj):
         order_qty = summary.order_qty or summary.order_count or 0
         summary.order_qty = order_qty
 
+        # 没有净订单时（仅有退款或无交易），产品成本和运费归零（仓储/广告等实际费用保留）
+        if (summary.order_count or 0) <= 0:
+            summary.product_cost_rmb = Decimal("0")
+            summary.freight_cost_rmb = Decimal("0")
+            order_qty = 0
+            summary.order_qty = 0
+            # 不 continue，继续算净利润（保留广告/仓储等费用）
+
         # 按月份查找成本（优先当月，否则取任意有成本的记录）
         cost_per_unit = Decimal("0")
         freight_per_unit = Decimal("0")
@@ -2984,11 +3622,13 @@ def _recalculate_all_profit(db, country_obj):
             if pc:
                 cost_per_unit = Decimal(str(pc.cost_rmb or 0))
                 freight_per_unit = Decimal(str(pc.freight_per_unit or 0))
-        # 按月度汇率换算
-        er = Decimal(str(db.query(DimExchangeRate).filter(
-            DimExchangeRate.country_id == country_obj.id, DimExchangeRate.year_month == ym).first().rate or 6.8
-        )) if db.query(DimExchangeRate).filter(DimExchangeRate.country_id == country_obj.id, DimExchangeRate.year_month == ym).first() else Decimal("6.8")
-        if er == Decimal("0"): er = Decimal("6.8")
+        # 按月度汇率换算（仅店铺专属）
+        _er_obj = db.query(DimExchangeRate).filter(
+            DimExchangeRate.country_id == country_obj.id,
+            DimExchangeRate.year_month == ym,
+            DimExchangeRate.store_id == summary.store_id,
+        ).first() if summary.store_id else None
+        er = Decimal(str(_er_obj.rate)) if _er_obj and _er_obj.rate and Decimal(str(_er_obj.rate)) != 0 else Decimal("6.8")
 
         summary.product_cost_rmb = (cost_per_unit * order_qty).quantize(Decimal("0.01"))
         summary.freight_cost_rmb = (freight_per_unit * order_qty).quantize(Decimal("0.01"))

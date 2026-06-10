@@ -26,20 +26,20 @@ DB_CONFIG = {
 STORE_CODE = "MGK-EU"
 
 # ============================================================
-# 国家配置：代码 → (文件名, header行数, 货币, 数字格式类型)
+# 国家配置：代码 → (文件名, header行数, 数字格式类型)
 # ============================================================
 COUNTRY_CONFIG = {
-    "UK": {"file": "MGK-英国站销售明细.csv",   "header": 9,  "currency": "GBP", "numfmt": "dot"},
-    "DE": {"file": "MGK-德国站销售明细.csv",   "header": 9,  "currency": "EUR", "numfmt": "comma"},
-    "FR": {"file": "MGK-法国站销售明细.csv",   "header": 9,  "currency": "EUR", "numfmt": "comma"},
-    "ES": {"file": "MGK-西班牙站销售明细.csv", "header": 9,  "currency": "EUR", "numfmt": "comma"},
-    "IT": {"file": "MGK-意大利站销售明细.csv", "header": 9,  "currency": "EUR", "numfmt": "comma"},
-    "NL": {"file": "MGK-荷兰站销售明细.csv",   "header": 9,  "currency": "EUR", "numfmt": "comma"},
-    "SE": {"file": "MGK-瑞典站销售明细.csv",   "header": 9,  "currency": "SEK", "numfmt": "space_comma"},
-    "BE": {"file": "MGK-比利时站销售明细.csv", "header": 9,  "currency": "EUR", "numfmt": "comma"},
-    "IE": {"file": "MGK-爱尔兰站销售明细.csv", "header": 9,  "currency": "EUR", "numfmt": "dot"},
-    "AE": {"file": "MGK-阿联酋站销售明细.csv", "header": 8,  "currency": "AED", "numfmt": "mixed"},
-    "SA": {"file": "MGK-沙特站销售明细.csv",   "header": 9,  "currency": "SAR", "numfmt": "dot"},
+    "UK": {"file": "MGK-英国站销售明细.csv",   "header": 9,  "numfmt": "dot"},
+    "DE": {"file": "MGK-德国站销售明细.csv",   "header": 9,  "numfmt": "comma"},
+    "FR": {"file": "MGK-法国站销售明细.csv",   "header": 9,  "numfmt": "comma"},
+    "ES": {"file": "MGK-西班牙站销售明细.csv", "header": 9,  "numfmt": "comma"},
+    "IT": {"file": "MGK-意大利站销售明细.csv", "header": 9,  "numfmt": "comma"},
+    "NL": {"file": "MGK-荷兰站销售明细.csv",   "header": 9,  "numfmt": "comma"},
+    "SE": {"file": "MGK-瑞典站销售明细.csv",   "header": 9,  "numfmt": "space_comma"},
+    "BE": {"file": "MGK-比利时站销售明细.csv", "header": 9,  "numfmt": "comma"},
+    "IE": {"file": "MGK-爱尔兰站销售明细.csv", "header": 9,  "numfmt": "dot"},
+    "AE": {"file": "MGK-阿联酋站销售明细.csv", "header": 8,  "numfmt": "mixed"},
+    "SA": {"file": "MGK-沙特站销售明细.csv",   "header": 9,  "numfmt": "dot"},
 }
 
 # ============================================================

@@ -14,6 +14,7 @@ class DimCountry(Base):
 class DimExchangeRate(Base):
     __tablename__ = "dim_exchange_rate"
     id = Column(Integer, primary_key=True, autoincrement=True)
+    store_id = Column(Integer, ForeignKey("dim_store.id"), nullable=True)
     country_id = Column(Integer, ForeignKey("dim_country.id"), nullable=False)
     year_month = Column("year_month", String(7), nullable=False)
     rate = Column(Numeric(10, 4), nullable=False)

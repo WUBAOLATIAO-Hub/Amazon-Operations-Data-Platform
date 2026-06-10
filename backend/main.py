@@ -62,6 +62,17 @@ def update_store(code: str, name: str, new_code: str = None, db: Session = Depen
     db.commit()
     return {"id": s.id, "code": s.code, "name": s.name}
 
+@app.get("/api/stores/{store_name}/countries")
+def get_store_countries(store_name: str, db: Session = Depends(get_db)):
+    """返回指定店铺下有数据的国家列表"""
+    from models import DimStore, DimCountry, MonthlySummary
+    store = db.query(DimStore).filter(DimStore.name == store_name).first()
+    if not store: return []
+    countries = db.query(DimCountry).join(
+        MonthlySummary, MonthlySummary.country_id == DimCountry.id
+    ).filter(MonthlySummary.store_id == store.id).distinct().all()
+    return [{"id": c.id, "code": c.code, "name": c.name} for c in countries]
+
 @app.delete("/api/admin/countries/{code}")
 def delete_country(code: str, db: Session = Depends(get_db)):
     from models import DimCountry, MonthlySummary
@@ -101,31 +112,35 @@ def create_country(code: str, name: str, currency: str = "USD", db: Session = De
     db.commit()
     return {"id": c.id, "code": c.code, "name": c.name}
 
-@app.delete("/api/admin/countries/{code}")
-def delete_country(code: str, db: Session = Depends(get_db)):
-    from models import DimCountry
-    c = db.query(DimCountry).filter(DimCountry.code == code.upper()).first()
-    if not c: return {"detail": "国家不存在"}
-    db.delete(c)
-    db.commit()
-    return {"message": "已删除"}
-
 # === 汇率管理 ===
 @app.get("/api/admin/exchange-rates")
-def list_rates(country_id: int = None, year_month: str = None, db: Session = Depends(get_db)):
-    from models import DimExchangeRate, DimCountry
-    q = db.query(DimExchangeRate.id, DimCountry.code, DimExchangeRate.year_month, DimExchangeRate.rate).join(DimCountry)
+def list_rates(country_id: int = None, year_month: str = None, store: str = None, db: Session = Depends(get_db)):
+    from models import DimExchangeRate, DimCountry, DimStore
+    q = db.query(DimExchangeRate.id, DimCountry.code, DimExchangeRate.year_month, DimExchangeRate.rate, DimStore.name).join(DimCountry).outerjoin(DimStore, DimExchangeRate.store_id == DimStore.id)
     if country_id: q = q.filter(DimExchangeRate.country_id == country_id)
     if year_month: q = q.filter(DimExchangeRate.year_month == year_month)
-    return [{"id": r[0], "country_code": r[1], "year_month": r[2], "rate": float(r[3])} for r in q.all()]
+    if store:
+        store_obj = db.query(DimStore).filter(DimStore.name == store).first()
+        if store_obj: q = q.filter(DimExchangeRate.store_id == store_obj.id)
+    return [{"id": r[0], "country_code": r[1], "year_month": r[2], "rate": float(r[3]), "store": r[4] or "全局"} for r in q.all()]
 
 @app.post("/api/admin/exchange-rates")
-def create_rate(country_id: int, year_month: str, rate: float, db: Session = Depends(get_db)):
-    from models import DimExchangeRate, DimCountry
-    r = DimExchangeRate(country_id=country_id, year_month=year_month, rate=rate)
-    db.add(r)
+def create_rate(country_id: int, year_month: str, rate: float, store: str = None, db: Session = Depends(get_db)):
+    from models import DimExchangeRate, DimCountry, DimStore
+    store_id = None
+    if store:
+        store_obj = db.query(DimStore).filter(DimStore.name == store).first()
+        if store_obj: store_id = store_obj.id
+    # upsert: 查找已有记录
+    existing = db.query(DimExchangeRate).filter(DimExchangeRate.country_id == country_id, DimExchangeRate.year_month == year_month, DimExchangeRate.store_id == store_id).first()
+    if existing:
+        existing.rate = rate
+        r = existing
+    else:
+        r = DimExchangeRate(country_id=country_id, year_month=year_month, rate=rate, store_id=store_id)
+        db.add(r)
     db.commit()
-    # 汇率变更后重算该国家所有月份利润
+    # 汇率变更后重算该店铺该国家所有月份利润
     country_obj = db.query(DimCountry).filter(DimCountry.id == country_id).first()
     if country_obj:
         from routers.import_data import _recalculate_all_profit
@@ -141,7 +156,6 @@ def delete_rate(rate_id: int, db: Session = Depends(get_db)):
     country_id = r.country_id
     db.delete(r)
     db.commit()
-    # 汇率删除后重算该国家所有月份利润
     country_obj = db.query(DimCountry).filter(DimCountry.id == country_id).first()
     if country_obj:
         from routers.import_data import _recalculate_all_profit
@@ -156,21 +170,12 @@ def update_rate(rate_id: int, rate: float, db: Session = Depends(get_db)):
     if not r: return {"detail": "不存在"}
     r.rate = rate
     db.commit()
-    # 汇率变更后重算该国家所有月份利润
     country_obj = db.query(DimCountry).filter(DimCountry.id == r.country_id).first()
     if country_obj:
         from routers.import_data import _recalculate_all_profit
         _recalculate_all_profit(db, country_obj)
         db.commit()
     return {"id": r.id, "rate": float(r.rate)}
-
-def _get_exchange_rate(db: Session, country_id: int, year_month: str) -> float:
-    """获取某国某月汇率，fallback到最近月份"""
-    from models import DimExchangeRate
-    r = db.query(DimExchangeRate).filter(DimExchangeRate.country_id == country_id, DimExchangeRate.year_month == year_month).first()
-    if r: return float(r.rate)
-    r = db.query(DimExchangeRate).filter(DimExchangeRate.country_id == country_id).order_by(DimExchangeRate.year_month.desc()).first()
-    return float(r.rate) if r else 6.8
 
 @app.get("/health")
 def health():
