@@ -45,16 +45,28 @@ export const uploadWorkbook = (file, country = 'auto', store, year, month) => {
 // 店铺
 export const getStores = () => api.get('/stores')
 export const createStore = (code, name) => api.post('/admin/stores', null, { params: { code, name } })
+export const updateStore = (code, name, new_code) => api.put(`/admin/stores/${code}`, null, { params: { name, new_code } })
 export const deleteStore = (code) => api.delete(`/admin/stores/${code}`)
+export const getStoreCountries = (storeName) => api.get(`/stores/${encodeURIComponent(storeName)}/countries`)
 
 // 国家管理
 export const getCountries = () => api.get('/admin/countries')
-export const createCountry = (code, name, currency, exchangeRate) => api.post('/admin/countries', null, { params: { code, name, currency, exchange_rate: exchangeRate } })
+export const createCountry = (code, name) => api.post('/admin/countries', null, { params: { code, name } })
+export const updateCountry = (code, name) => api.put(`/admin/countries/${code}`, null, { params: { name } })
 export const deleteCountry = (code) => api.delete(`/admin/countries/${code}`)
+
+// 汇率管理
+export const getExchangeRates = () => api.get('/admin/exchange-rates')
+export const createExchangeRate = (country_id, year_month, rate, store) =>
+  api.post('/admin/exchange-rates', null, { params: { country_id, year_month, rate, store } })
+export const updateExchangeRate = (id, rate) => api.put(`/admin/exchange-rates/${id}`, null, { params: { rate } })
+export const deleteExchangeRate = (id) => api.delete(`/admin/exchange-rates/${id}`)
+
+// 重算利润
+export const recalculateProfit = (country) => api.post('/import/recalculate', null, { params: country ? { country } : {} })
 
 // 查询
 export const getMonthlySummary = (params) => api.get('/query/monthly-summary', { params })
 export const getCountrySummary = (params) => api.get('/query/country-summary', { params })
-export const getTransactions = (params) => api.get('/query/transactions', { params })
 
 export default api

@@ -84,12 +84,11 @@ def delete_country(code: str, db: Session = Depends(get_db)):
     return {"message": "已删除"}
 
 @app.put("/api/admin/countries/{code}")
-def update_country(code: str, name: str, currency: str = None, new_code: str = None, db: Session = Depends(get_db)):
+def update_country(code: str, name: str, new_code: str = None, db: Session = Depends(get_db)):
     from models import DimCountry
     c = db.query(DimCountry).filter(DimCountry.code == code.upper()).first()
     if not c: return {"detail": "不存在"}
     c.name = name
-    if currency: c.currency = currency
     if new_code and new_code.upper() != code.upper():
         if db.query(DimCountry).filter(DimCountry.code == new_code.upper()).first(): return {"detail": "代码已存在"}
         c.code = new_code.upper()
@@ -100,14 +99,14 @@ def update_country(code: str, name: str, currency: str = None, new_code: str = N
 @app.get("/api/admin/countries")
 def list_countries(db: Session = Depends(get_db)):
     from models import DimCountry
-    return [{"id": c.id, "code": c.code, "name": c.name, "currency": c.currency} for c in db.query(DimCountry).all()]
+    return [{"id": c.id, "code": c.code, "name": c.name} for c in db.query(DimCountry).all()]
 
 @app.post("/api/admin/countries")
-def create_country(code: str, name: str, currency: str = "USD", db: Session = Depends(get_db)):
+def create_country(code: str, name: str, db: Session = Depends(get_db)):
     from models import DimCountry
     if db.query(DimCountry).filter(DimCountry.code == code.upper()).first():
         return {"detail": "国家代码已存在"}
-    c = DimCountry(code=code.upper(), name=name, currency=currency)
+    c = DimCountry(code=code.upper(), name=name)
     db.add(c)
     db.commit()
     return {"id": c.id, "code": c.code, "name": c.name}

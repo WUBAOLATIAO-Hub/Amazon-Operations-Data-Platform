@@ -8,7 +8,7 @@ class DimCountry(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     code = Column(String(5), unique=True, nullable=False)
     name = Column("name", String(50), nullable=False)
-    currency = Column(String(5), nullable=False)
+    currency = Column(String(10), default="")
 
 
 class DimExchangeRate(Base):
@@ -25,7 +25,6 @@ class DimStore(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     code = Column(String(50), unique=True, nullable=False)
     name = Column("name", String(100), nullable=False)
-    created_at = Column(TIMESTAMP, server_default=func.now())
 
 
 class DimProduct(Base):
@@ -40,7 +39,7 @@ class DimProductCost(Base):
     __tablename__ = "dim_product_cost"
     id = Column(Integer, primary_key=True, autoincrement=True)
     product_id = Column(Integer, ForeignKey("dim_product.id"), nullable=False)
-    year_month = Column("ym", String(7), nullable=False)  # '2026-05'
+    year_month = Column("year_month", String(7), nullable=False)  # '2026-05'
     cost_rmb = Column(Numeric(10, 2), default=0)
     freight_per_unit = Column(Numeric(10, 2), default=0)
     exchange_rate = Column(Numeric(10, 4), nullable=True)
@@ -61,7 +60,7 @@ class RawTransaction(Base):
     store_id = Column(Integer, ForeignKey("dim_store.id"), nullable=True)
     transaction_date = Column(DateTime)
     settlement_id = Column(String(50))
-    transaction_type = Column(String(20))
+    transaction_type = Column(String(80))
     order_id = Column(String(50))
     sku = Column(String(50))
     description = Column(String(500))
@@ -279,7 +278,7 @@ class RawLongTermStorage(Base):
     product_name = Column(String(500))
     condition_val = Column(String(50))
     per_unit_volume = Column(Numeric(12, 6), default=0)
-    currency = Column(String(10))
+    currency = Column(String(50))
     volume_unit = Column(String(50))
     country = Column(String(50))
     qty_charged = Column(Integer, default=0)

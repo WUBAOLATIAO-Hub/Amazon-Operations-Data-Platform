@@ -38,7 +38,7 @@ CREATE TABLE raw_transactions (
     country_id INT NOT NULL,
     transaction_date DATETIME,
     settlement_id VARCHAR(50),
-    transaction_type VARCHAR(20),
+    transaction_type VARCHAR(80),
     order_id VARCHAR(50),
     sku VARCHAR(50),
     description VARCHAR(500),

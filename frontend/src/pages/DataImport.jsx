@@ -395,40 +395,6 @@ export default function DataImport() {
           options={Array.from({length:12},(_,i)=>({value:i+1,label:`${i+1}月`}))} />
       </div>
 
-      {/* 文件夹导入 */}
-      <Card size="small" style={{ marginBottom: 16, background: '#e6f7ff' }}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <strong>📁 文件夹导入：</strong>
-          <Upload
-            multiple
-            accept=".csv,.xlsx"
-            showUploadList={false}
-            beforeUpload={() => false}
-            onChange={async (info) => {
-              const files = info.fileList.map(f => f.originFileObj).filter(Boolean)
-              if (files.length === 0) return
-              const form = new FormData()
-              files.forEach(f => form.append('files', f))
-              form.append('store', store)
-              form.append('import_year', importYear)
-              form.append('import_month', importMonth)
-              try {
-                const res = await axios.post('/api/import/folder', form, {
-                  headers: { 'Content-Type': 'multipart/form-data' },
-                  timeout: 120000
-                })
-                message.success(res.data.message || '导入完成')
-              } catch(e) {
-                message.error('导入失败: ' + (e.response?.data?.detail || e.message))
-              }
-            }}
-          >
-            <Button icon={<span>📂</span>}>选择文件（可多选）</Button>
-          </Upload>
-          <span style={{ color: '#666', fontSize: 12 }}>自动识别类型，支持CSV和XLSX混合上传</span>
-        </div>
-      </Card>
-
       {/* Tabs */}
       <Tabs
         activeKey={activeTab}

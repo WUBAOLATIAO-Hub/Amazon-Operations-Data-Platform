@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { Card, Table, Button, Modal, Input, InputNumber, message, Popconfirm, Space, Tabs, Select, Spin } from 'antd'
-import { PlusOutlined, DeleteOutlined, EditOutlined, ShopOutlined, GlobalOutlined, DollarOutlined } from '@ant-design/icons'
-import { getStores, createStore, deleteStore, getCountries, createCountry, deleteCountry } from '../api'
-import axios from 'axios'
-const api = axios.create({ baseURL: '/api' })
+import { PlusOutlined, DeleteOutlined, EditOutlined, ShopOutlined, GlobalOutlined, DollarOutlined, ReloadOutlined } from '@ant-design/icons'
+import {
+  getStores, createStore, updateStore, deleteStore,
+  getCountries, createCountry, updateCountry, deleteCountry,
+  getExchangeRates, createExchangeRate, updateExchangeRate, deleteExchangeRate,
+  getStoreCountries, recalculateProfit,
+} from '../api'
 
 export default function SystemAdmin() {
   const [tab, setTab] = useState('stores')
@@ -12,6 +15,7 @@ export default function SystemAdmin() {
       { key: 'stores', label: <><ShopOutlined /> 店铺管理</>, children: <StoreManager /> },
       { key: 'countries', label: <><GlobalOutlined /> 国家管理</>, children: <CountryManager /> },
       { key: 'rates', label: <><DollarOutlined /> 汇率管理</>, children: <RateManager /> },
+      { key: 'tools', label: <><ReloadOutlined /> 数据工具</>, children: <DataTools /> },
     ]} />
   )
 }
@@ -23,7 +27,7 @@ function StoreManager() {
   useEffect(() => { fetch() }, [])
   const save = async () => {
     if (editing) {
-      await api.put(`/admin/stores/${code}`, null, { params: { name, new_code: code } })
+      await updateStore(code, name, code)
     } else {
       await createStore(code, name)
     }
@@ -44,25 +48,24 @@ function StoreManager() {
 
 function CountryManager() {
   const [data, setData] = useState([]); const [loading, setLoading] = useState(false)
-  const [open, setOpen] = useState(false); const [code, setCode] = useState(''); const [name, setName] = useState(''); const [currency,setCurrency]=useState('USD'); const [editing, setEditing] = useState(false)
+  const [open, setOpen] = useState(false); const [code, setCode] = useState(''); const [name, setName] = useState(''); const [editing, setEditing] = useState(false)
   const fetch = async () => { setLoading(true); setData((await getCountries()).data||[]); setLoading(false) }
   useEffect(()=>{fetch()},[])
   const save = async () => {
-    if (editing) { await api.put(`/admin/countries/${code}`, null, { params: { name, currency } }) }
-    else { await api.post('/admin/countries', null, { params: { code: code.toUpperCase(), name, currency } }) }
+    if (editing) { await updateCountry(code, name) }
+    else { await createCountry(code.toUpperCase(), name) }
     message.success(editing?'已更新':'已创建'); setOpen(false); setEditing(false); fetch()
   }
-  return (<Card><Space style={{marginBottom:16}}><Button type="primary" icon={<PlusOutlined/>} onClick={()=>{setEditing(false);setCode('');setName('');setCurrency('USD');setOpen(true)}}>创建国家</Button></Space>
+  return (<Card><Space style={{marginBottom:16}}><Button type="primary" icon={<PlusOutlined/>} onClick={()=>{setEditing(false);setCode('');setName('');setOpen(true)}}>创建国家</Button></Space>
     <Table rowKey="id" size="small" loading={loading} dataSource={data} pagination={false}
-      columns={[{title:'代码',dataIndex:'code',width:80},{title:'名称',dataIndex:'name',width:150},{title:'货币',dataIndex:'currency',width:80},
+      columns={[{title:'代码',dataIndex:'code',width:80},{title:'名称',dataIndex:'name',width:150},
         {title:'操作',width:140,render:(_,r)=>(<Space size={0}>
-          <Button size="small" icon={<EditOutlined/>} onClick={()=>{setEditing(true);setCode(r.code);setName(r.name);setCurrency(r.currency);setOpen(true)}}/>
-          <Popconfirm title="确定删除？" onConfirm={async()=>{await api.delete(`/admin/countries/${r.code}`);fetch()}}><Button danger size="small" icon={<DeleteOutlined/>}/></Popconfirm>
+          <Button size="small" icon={<EditOutlined/>} onClick={()=>{setEditing(true);setCode(r.code);setName(r.name);setOpen(true)}}/>
+          <Popconfirm title="确定删除？" onConfirm={async()=>{await deleteCountry(r.code);fetch()}}><Button danger size="small" icon={<DeleteOutlined/>}/></Popconfirm>
         </Space>)}]}/>
     <Modal title={editing?'编辑国家':'创建国家'} open={open} onOk={save} onCancel={()=>setOpen(false)}>
       <div style={{marginBottom:8}}>代码 <Input value={code} onChange={e=>setCode(e.target.value)} placeholder="如 FR" disabled={editing}/></div>
-      <div style={{marginBottom:8}}>名称 <Input value={name} onChange={e=>setName(e.target.value)} placeholder="如 法国站"/></div>
-      <div>货币 <Input value={currency} onChange={e=>setCurrency(e.target.value)} placeholder="USD"/></div>
+      <div>名称 <Input value={name} onChange={e=>setName(e.target.value)} placeholder="如 法国站"/></div>
     </Modal></Card>)
 }
 
@@ -76,7 +79,7 @@ function RateManager() {
 
   const fetchRatesAndStores = async () => {
     setLoading(true)
-    const [r, s] = await Promise.all([api.get('/admin/exchange-rates'), api.get('/stores')])
+    const [r, s] = await Promise.all([getExchangeRates(), getStores()])
     setRates(r.data||[]); setStores(s.data||[]); setLoading(false)
   }
   useEffect(()=>{fetchRatesAndStores()},[])
@@ -84,11 +87,11 @@ function RateManager() {
   // 根据选中店铺动态加载国家
   useEffect(() => {
     if (selectedStore) {
-      api.get(`/stores/${encodeURIComponent(selectedStore)}/countries`).then(res => {
+      getStoreCountries(selectedStore).then(res => {
         setCountries(res.data || [])
       })
     } else {
-      api.get('/admin/countries').then(res => {
+      getCountries().then(res => {
         setCountries(res.data || [])
       })
     }
@@ -130,9 +133,9 @@ function RateManager() {
   }
   const save = async () => {
     if (editing) {
-      await api.put(`/admin/exchange-rates/${editId}`, null, { params: { rate } })
+      await updateExchangeRate(editId, rate)
     } else {
-      await api.post('/admin/exchange-rates', null, { params: { country_id: cid, year_month: ym, rate, store: selectedStore } })
+      await createExchangeRate(cid, ym, rate, selectedStore)
     }
     message.success(editing ? '已更新' : '已创建')
     setOpen(false); setEditing(false); fetchRatesAndStores()
@@ -165,7 +168,7 @@ function RateManager() {
             r.hasRate
               ? <Space size={0}>
                   <Button size="small" type="link" icon={<EditOutlined/>} onClick={()=>openEdit(r)}>修改</Button>
-                  <Popconfirm title="确定删除？" onConfirm={async()=>{await api.delete(`/admin/exchange-rates/${r.id}`);fetchRatesAndStores()}}>
+                  <Popconfirm title="确定删除？" onConfirm={async()=>{await deleteExchangeRate(r.id);fetchRatesAndStores()}}>
                     <Button size="small" type="link" danger icon={<DeleteOutlined/>}>删除</Button>
                   </Popconfirm>
                 </Space>
@@ -190,5 +193,49 @@ function RateManager() {
         </div>
       </Modal>
     </div>
+  )
+}
+
+function DataTools() {
+  const [loading, setLoading] = useState(false)
+  const [results, setResults] = useState(null)
+
+  const handleRecalculate = async (country) => {
+    setLoading(true)
+    try {
+      const res = await recalculateProfit(country || null)
+      if (res.data.detail) {
+        message.error(res.data.detail)
+      } else {
+        setResults(res.data.results)
+        message.success(res.data.message || '重算完成')
+      }
+    } catch (e) {
+      message.error('重算失败: ' + (e.response?.data?.detail || e.message))
+    }
+    setLoading(false)
+  }
+
+  return (
+    <Card title="数据重算工具" extra={<Spin spinning={loading} />}>
+      <p style={{marginBottom:16,color:'#666'}}>
+        修改汇率或修复数据后，点击下方按钮重新计算所有产品的净利润。
+        <br/>数据量大时可能需要等待 10-30 秒。
+      </p>
+      <Space>
+        <Button type="primary" icon={<ReloadOutlined/>} loading={loading} onClick={()=>handleRecalculate()}>
+          重算全部国家
+        </Button>
+      </Space>
+      {results && (
+        <Table rowKey="country" size="small" style={{marginTop:16}} dataSource={Object.entries(results).map(([k,v])=>({country:k,...v}))} pagination={false}
+          columns={[
+            {title:'国家',dataIndex:'country',width:80},
+            {title:'销售额(RMB)',dataIndex:'sales_rmb',width:150,render:v=>v?.toLocaleString()},
+            {title:'净利润(RMB)',dataIndex:'net_profit_rmb',width:150,render:v=><span style={{color:v>=0?'#52c41a':'#ff4d4f',fontWeight:600}}>{v?.toLocaleString()}</span>},
+            {title:'记录数',dataIndex:'summary_count',width:100},
+          ]}/>
+      )}
+    </Card>
   )
 }
