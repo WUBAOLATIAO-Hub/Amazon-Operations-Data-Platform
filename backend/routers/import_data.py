@@ -20,32 +20,74 @@ router = APIRouter()
 
 
 def _detect_country_from_data(db: Session, header, rows):
-    """从数据文件中自动检测国家: marketplace/country_code → 各国代码"""
+    """从数据文件中自动检测国家: 优先查 marketplace/country_code/国家/地区 列，
+    找不到时扫描所有列值"""
     mp_idx = None; cc_idx = None
     for i, h in enumerate(header):
         hl = h.lower().strip() if h else ""
         if hl == 'marketplace': mp_idx = i  # 精确匹配，避免 "marketplace withheld tax"
-        if hl in ('country_code', 'country'): cc_idx = i
+        if hl in ('country_code', 'country', '国家/地区'): cc_idx = i
+
+    # 已知国家列的匹配模式（精确，可包容缩写）
+    _col_patterns = [
+        (['mx', 'mex', 'amazon.com.mx', 'mexico'], 'MX'),
+        (['ca', 'can', 'amazon.ca', 'canada'], 'CA'),
+        (['au', 'aus', 'amazon.com.au', 'australia'], 'AU'),
+        (['us', 'usa', 'amazon.com', 'united states'], 'US'),
+        (['uk', 'gb', 'gbr', 'amazon.co.uk', 'united kingdom'], 'UK'),
+        (['de', 'deu', 'amazon.de', 'germany'], 'DE'),
+        (['fr', 'fra', 'amazon.fr', 'france'], 'FR'),
+        (['es', 'esp', 'amazon.es', 'spain'], 'ES'),
+        (['it', 'ita', 'amazon.it', 'italy'], 'IT'),
+        (['nl', 'nld', 'amazon.nl', 'netherlands'], 'NL'),
+        (['se', 'swe', 'amazon.se', 'sweden'], 'SE'),
+        (['be', 'bel', 'amazon.com.be', 'belgium'], 'BE'),
+        (['ie', 'irl', 'amazon.ie', 'ireland'], 'IE'),
+        (['ae', 'are', 'amazon.ae', 'uae'], 'AE'),
+        (['sa', 'sau', 'amazon.sa', 'saudi'], 'SA'),
+    ]
+    # 全列扫描的匹配模式（保守，仅匹配长关键词，防止 "us" 误匹配 "USB"、 "de" 误匹配 "code"）
+    _full_scan_patterns = [
+        (['amazon.com.mx', 'mexico'], 'MX'),
+        (['amazon.ca', 'canada'], 'CA'),
+        (['amazon.com.au', 'australia'], 'AU'),
+        (['amazon.com', 'united states', 'usa'], 'US'),  # 不含 "us" 单字母
+        (['amazon.co.uk', 'united kingdom'], 'UK'),
+        (['amazon.de', 'germany', 'deu'], 'DE'),  # 不含 "de" 单字母
+        (['amazon.fr', 'france', 'fra'], 'FR'),
+        (['amazon.es', 'spain', 'esp'], 'ES'),
+        (['amazon.it', 'italy', 'ita'], 'IT'),
+        (['amazon.nl', 'netherlands', 'nld'], 'NL'),
+        (['amazon.se', 'sweden', 'swe'], 'SE'),
+        (['amazon.com.be', 'belgium', 'bel'], 'BE'),
+        (['amazon.ie', 'ireland', 'irl'], 'IE'),
+        (['amazon.ae', 'uae', 'are'], 'AE'),
+        (['amazon.sa', 'saudi', 'sau'], 'SA'),
+    ]
+
+    def _match(v, patterns):
+        v = v.lower().strip()
+        for pats, code in patterns:
+            if v in pats:
+                return code
+        return None
+
+    # 第一轮：查已知国家列（marketplace / country_code / 国家/地区）
     for row in rows[:20]:
         vals = []
-        if mp_idx is not None and len(row) > mp_idx: vals.append(str(row[mp_idx] or '').lower())
-        if cc_idx is not None and len(row) > cc_idx: vals.append(str(row[cc_idx] or '').lower())
+        if mp_idx is not None and len(row) > mp_idx: vals.append(str(row[mp_idx] or ''))
+        if cc_idx is not None and len(row) > cc_idx: vals.append(str(row[cc_idx] or ''))
         for v in vals:
-            if v in ('mx', 'mex', 'amazon.com.mx', 'mexico'): return 'MX'
-            if v in ('ca', 'can', 'amazon.ca', 'canada'): return 'CA'
-            if v in ('au', 'aus', 'amazon.com.au', 'australia'): return 'AU'
-            if v in ('us', 'usa', 'amazon.com', 'united states'): return 'US'
-            if v in ('uk', 'gb', 'gbr', 'amazon.co.uk', 'united kingdom'): return 'UK'
-            if v in ('de', 'deu', 'amazon.de', 'germany'): return 'DE'
-            if v in ('fr', 'fra', 'amazon.fr', 'france'): return 'FR'
-            if v in ('es', 'esp', 'amazon.es', 'spain'): return 'ES'
-            if v in ('it', 'ita', 'amazon.it', 'italy'): return 'IT'
-            if v in ('nl', 'nld', 'amazon.nl', 'netherlands'): return 'NL'
-            if v in ('se', 'swe', 'amazon.se', 'sweden'): return 'SE'
-            if v in ('be', 'bel', 'amazon.com.be', 'belgium'): return 'BE'
-            if v in ('ie', 'irl', 'amazon.ie', 'ireland'): return 'IE'
-            if v in ('ae', 'are', 'amazon.ae', 'uae'): return 'AE'
-            if v in ('sa', 'sau', 'amazon.sa', 'saudi'): return 'SA'
+            code = _match(v, _col_patterns)
+            if code: return code
+
+    # 第二轮：全列扫描（保守模式，避免误匹配）
+    for row in rows[:20]:
+        for cell in row:
+            if cell is not None:
+                code = _match(str(cell), _full_scan_patterns)
+                if code: return code
+
     return None
 
 
@@ -1784,7 +1826,7 @@ async def import_workbook(
 
         # ===== 自动检测国家（每个sheet独立检测，支持多国家工作簿）=====
         # 多国家 sheet 类型：从数据行的 country_code/country 列读取国家，不按 sheet 分配
-        _multi_country_types = {"storage", "long_term_storage", "returns", "exchange_rate"}
+        _multi_country_types = {"storage", "long_term_storage", "returns", "inbound", "exchange_rate"}
         _sheet_country_kw = {
             '英国': 'UK', 'UK': 'UK',
             '德国': 'DE', 'DE': 'DE',
@@ -1913,8 +1955,23 @@ async def import_workbook(
             if not co and stype in _multi_country_types:
                 co = None  # 让 _process_fee_sheet 按行独立检测
             if not co and stype not in _multi_country_types:
-                results[sheet_name] = {"status": "error", "type": stype, "detail": f"国家 {cc} 不存在"}
-                continue
+                # 尝试1：同工作簿其他sheet已检测到的国家
+                for _sn, _c in sheet_countries.items():
+                    if _c and _c in country_objs:
+                        co = country_objs[_c]
+                        break
+                # 尝试2：从该店铺已有交易数据推断国家
+                if not co:
+                    _top = db.query(RawTransaction.country_id, func.count(RawTransaction.id).label('cnt'))\
+                        .filter(RawTransaction.store_id == store_obj.id)\
+                        .group_by(RawTransaction.country_id).order_by(func.count(RawTransaction.id).desc()).first()
+                    if _top:
+                        _top_co = db.query(DimCountry).filter(DimCountry.id == _top[0]).first()
+                        if _top_co:
+                            co = _top_co
+                if not co:
+                    results[sheet_name] = {"status": "error", "type": stype, "detail": f"国家 {cc} 不存在，无法自动检测"}
+                    continue
             try:
                 if stype == "advertising":
                     result = _process_advertising_sheet(db, co, header, rows, store_id=store_obj.id, import_year=import_year, import_month=import_month)
