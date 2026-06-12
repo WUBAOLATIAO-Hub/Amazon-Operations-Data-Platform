@@ -19,8 +19,12 @@ def _build_base_query(db, store_id=None, country_id=None, year=None, month=None)
     filters = []
     if country_id:
         filters.append(MonthlySummary.country_id == country_id)
-    if time_ids:
-        filters.append(MonthlySummary.time_id.in_(time_ids))
+    if year or month:
+        # 指定了年月但无匹配的 dim_time 记录 → 无数据
+        if not time_ids:
+            filters.append(MonthlySummary.time_id == -1)  # 永假条件，确保返回空
+        else:
+            filters.append(MonthlySummary.time_id.in_(time_ids))
     if store_id:
         filters.append(MonthlySummary.store_id == store_id)
 
@@ -182,8 +186,11 @@ def get_monthly_summary(
         ms_on = [MonthlySummary.product_id == DimProduct.id]
         if country_id:
             ms_on.append(MonthlySummary.country_id == country_id)
-        if time_ids:
-            ms_on.append(MonthlySummary.time_id.in_(time_ids))
+        if year or month:
+            if not time_ids:
+                ms_on.append(MonthlySummary.time_id == -1)
+            else:
+                ms_on.append(MonthlySummary.time_id.in_(time_ids))
         if store_id:
             ms_on.append(MonthlySummary.store_id == store_id)
 

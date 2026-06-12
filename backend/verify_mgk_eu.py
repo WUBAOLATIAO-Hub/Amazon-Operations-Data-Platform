@@ -35,7 +35,7 @@ results = db.query(
 ).join(
     DimCountry, MonthlySummary.country_id == DimCountry.id
 ).filter(
-    MonthlySummary.store_id == 4
+    MonthlySummary.store_id == 6
 ).group_by(
     DimCountry.code, DimCountry.name, DimCountry.currency
 ).order_by(
@@ -99,7 +99,7 @@ for r in results:
     ).first()
     dim_rate = Decimal(str(rate_in_dim.rate)) if rate_in_dim else Decimal("0")
     match = "OK" if rate_in_summary == dim_rate else "MISMATCH"
-    store_check = "STORE-SPECIFIC (store_id=4)" if rate_in_dim and rate_in_dim.store_id == 4 else "WARNING: NOT STORE-SPECIFIC"
+    store_check = "STORE-SPECIFIC (store_id=6)" if rate_in_dim and rate_in_dim.store_id == 4 else "WARNING: NOT STORE-SPECIFIC"
     print(f"  {r.code:<6} Summary rate={float(rate_in_summary):.4f}  dim_exchange_rate={float(dim_rate):.4f}  {match}  [{store_check}]")
 
 # ===================== Part 3: Sales RMB Verification =====================
@@ -136,14 +136,14 @@ print("Formula: net_profit_rmb = product_sales_rmb")
 print("  + commission_usd * exchange_rate    (commission stored as NEGATIVE)")
 print("  + fba_fee_usd * exchange_rate       (fba_fee stored as NEGATIVE)")
 print("  + adjustment_usd * exchange_rate")
+print("  + promo_rebate_usd * exchange_rate  (promo stored as NEGATIVE, included in product_sales)")
+print("  + promo_rebate_tax_usd * exchange_rate")
 print("  - product_cost_rmb")
 print("  - freight_cost_rmb")
 print("  - ad_spend_usd * exchange_rate")
 print("  - storage_fee_usd * exchange_rate")
 print("  - returns_fee_usd * exchange_rate")
 print("  - inbound_fee_usd * exchange_rate")
-print("  - promo_rebate_usd * exchange_rate")
-print("  - promo_rebate_tax_usd * exchange_rate")
 print()
 
 profit_ok_count = 0
@@ -171,14 +171,14 @@ for r in results:
         + commission * rate
         + fba * rate
         + adj * rate
+        + promo * rate
+        + promo_tax * rate
         - cost_rmb
         - freight_rmb
         - ad * rate
         - storage * rate
         - returns * rate
         - inbound * rate
-        - promo * rate
-        - promo_tax * rate
     ).quantize(Decimal("0.01"))
 
     diff = profit_db - profit_calc
@@ -204,7 +204,7 @@ print("=" * 140)
 print("FINAL SUMMARY")
 print("=" * 140)
 print()
-print(f"  Store: MGK-EU (id=4)")
+print(f"  Store: MGK-EU (id=6)")
 print(f"  Period: 2026-05")
 print(f"  Countries: {len(results)}")
 print(f"  Total Orders: {total_orders}")
@@ -215,7 +215,7 @@ print(f"  Total Freight RMB: {float(total_freight_rmb):,.2f}")
 print(f"  Total Profit RMB: {float(total_profit_rmb):,.2f}")
 print(f"  Overall Profit Rate: {float(total_pct):.2f}%")
 print()
-print(f"  Verification 1 (Exchange Rates): All store-specific (store_id=4)")
+print(f"  Verification 1 (Exchange Rates): All store-specific (store_id=6)")
 print(f"  Verification 2 (Sales RMB): {sales_ok_count}/{len(results)} correct")
 print(f"  Verification 3 (Profit RMB): {profit_ok_count}/{len(results)} correct")
 

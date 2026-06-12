@@ -271,9 +271,25 @@ def _get_or_create_monthly_summary(
 
 
 def _safe_decimal(value, default=0) -> Decimal:
+    """解析数字，支持欧洲格式(106,39)和英语格式(106.39)"""
     if value is None:
         return Decimal(str(default))
-    s = str(value).strip().replace("−", "-").replace(",", "").replace("$", "").replace("¥", "").replace("%", "")
+    s = str(value).strip()
+    if not s or s == '-' or s == '−':
+        return Decimal(str(default))
+    # Normalize Unicode minus
+    s = s.replace('−', '-')
+    # Remove currency symbols
+    s = s.replace('€', '').replace('$', '').replace('¥', '').replace('£', '').replace('%', '').strip()
+    import re
+    if re.search(r',\d{1,2}$', s):
+        # European format: "106,39" or "1 135,72" or "-10,64"
+        s = s.replace(' ', '').replace('.', '').replace(',', '.')
+    elif ',' in s and re.search(r',\d{3}', s):
+        # US thousands: "1,777.43"
+        s = s.replace(',', '')
+    else:
+        s = s.replace(',', '')
     if s == "" or s == "-":
         return Decimal(str(default))
     try:
@@ -683,6 +699,23 @@ async def import_transaction(
             quantity = _safe_int(mapped.get("quantity"))
             total = _safe_decimal(mapped.get("total"))
 
+            # 费用回填：如果佣金和FBA费都为0但total≠product_sales，从差额推算缺失费用
+            if txn_type == "Order" and product_sales > 0 and total > 0:
+                other_charges = _safe_decimal(mapped.get("other_transaction_fee")) + \
+                               _safe_decimal(mapped.get("promotional_rebates"))
+                implied_fees = product_sales - total + other_charges
+                captured_fees = abs(selling_fee)
+                if fba_fee == 0 and selling_fee == 0 and implied_fees > Decimal("0.5"):
+                    est_commission = (product_sales * Decimal("0.15")).quantize(Decimal("0.01"))
+                    est_fba = implied_fees - est_commission
+                    if est_fba < 0:
+                        est_commission = implied_fees
+                        est_fba = Decimal("0")
+                    selling_fee = -est_commission
+                    fba_fee = -est_fba
+                elif fba_fee == 0 and selling_fee != 0 and implied_fees > captured_fees + Decimal("0.5"):
+                    fba_fee = -(implied_fees - captured_fees)
+
             # 所有类型都写入 raw_transactions（全量存储）
             raw = RawTransaction(
                 country_id=country_obj.id,
@@ -820,14 +853,15 @@ async def import_transaction(
                 summary.product_sales_rmb
                 + summary.commission_usd * exchange_rate
                 + summary.fba_fee_usd * exchange_rate
+                + Decimal(str(summary.adjustment_usd or 0)) * exchange_rate
+                + Decimal(str(summary.promo_rebate_usd or 0)) * exchange_rate
+                + Decimal(str(summary.promo_rebate_tax_usd or 0)) * exchange_rate
                 - cost_rmb
                 - freight_rmb
                 - Decimal(str(summary.ad_spend_usd or 0)) * exchange_rate
                 - Decimal(str(summary.storage_fee_usd or 0)) * exchange_rate
                 - Decimal(str(summary.returns_fee_usd or 0)) * exchange_rate
                 - Decimal(str(summary.inbound_fee_usd or 0)) * exchange_rate
-
-
             ).quantize(Decimal("0.01"))
 
             summary.net_profit_rmb = net
@@ -864,6 +898,8 @@ async def import_transaction(
                 + Decimal(str(summary.commission_usd or 0)) * er
                 + Decimal(str(summary.fba_fee_usd or 0)) * er
                 + Decimal(str(summary.adjustment_usd or 0)) * er
+                + Decimal(str(summary.promo_rebate_usd or 0)) * er
+                + Decimal(str(summary.promo_rebate_tax_usd or 0)) * er
                 - Decimal(str(summary.product_cost_rmb or 0))
                 - Decimal(str(summary.freight_cost_rmb or 0))
                 - Decimal(str(summary.ad_spend_usd or 0)) * er
@@ -1205,6 +1241,9 @@ async def import_advertising(
                     summary.product_sales_rmb
                     + Decimal(str(summary.commission_usd or 0)) * exchange_rate
                     + Decimal(str(summary.fba_fee_usd or 0)) * exchange_rate
+                    + Decimal(str(summary.adjustment_usd or 0)) * exchange_rate
+                    + Decimal(str(summary.promo_rebate_usd or 0)) * exchange_rate
+                    + Decimal(str(summary.promo_rebate_tax_usd or 0)) * exchange_rate
                     - Decimal(str(summary.product_cost_rmb or 0))
                     - Decimal(str(summary.freight_cost_rmb or 0))
                     - agg["ad_spend"] * exchange_rate
@@ -1249,6 +1288,16 @@ async def import_storage(
         if not country_obj:
             return {"detail": f"国家 {country} 不存在"}
         store_obj = _get_or_default_store(db, store)
+
+        # 清空该店铺+国家的旧仓储费 raw 数据（防止重复导入累积）
+        clear_filters = [
+            RawStorageFee.country_id == country_obj.id,
+        ]
+        if store_obj:
+            clear_filters.append(RawStorageFee.store_id == store_obj.id)
+        else:
+            clear_filters.append(RawStorageFee.store_id.is_(None))
+        db.query(RawStorageFee).filter(*clear_filters).delete()
 
         content = await file.read()
         for encoding in ["utf-8-sig", "utf-8", "gbk", "latin-1"]:
@@ -1384,17 +1433,20 @@ async def import_storage(
             exchange_rate = _get_exchange_rate(db, country_obj, int(ym_parts[0]) if ym_parts else None, int(ym_parts[1]) if ym_parts else None, store_id=store_obj.id)
 
             for summary in target_summaries:
-                summary.storage_fee_usd = total_fee
+                summary.storage_fee_usd = (summary.storage_fee_usd or Decimal("0")) + total_fee
 
                 # 重新计算净利润
                 net = (
                     summary.product_sales_rmb
                     + Decimal(str(summary.commission_usd or 0)) * exchange_rate
                     + Decimal(str(summary.fba_fee_usd or 0)) * exchange_rate
+                    + Decimal(str(summary.adjustment_usd or 0)) * exchange_rate
+                    + Decimal(str(summary.promo_rebate_usd or 0)) * exchange_rate
+                    + Decimal(str(summary.promo_rebate_tax_usd or 0)) * exchange_rate
                     - Decimal(str(summary.product_cost_rmb or 0))
                     - Decimal(str(summary.freight_cost_rmb or 0))
                     - Decimal(str(summary.ad_spend_usd or 0)) * exchange_rate
-                    - total_fee * exchange_rate
+                    - Decimal(str(summary.storage_fee_usd or 0)) * exchange_rate
                     - Decimal(str(summary.returns_fee_usd or 0)) * exchange_rate
                     - Decimal(str(summary.inbound_fee_usd or 0)) * exchange_rate
                 ).quantize(Decimal("0.01"))
@@ -1433,6 +1485,14 @@ async def import_returns(
         if not country_obj:
             return {"detail": f"国家 {country} 不存在"}
         store_obj = _get_or_default_store(db, store)
+
+        # 清空该店铺+国家的旧退货费 raw 数据（防止重复导入累积）
+        clear_filters = [RawReturns.country_id == country_obj.id]
+        if store_obj:
+            clear_filters.append(RawReturns.store_id == store_obj.id)
+        else:
+            clear_filters.append(RawReturns.store_id.is_(None))
+        db.query(RawReturns).filter(*clear_filters).delete()
 
         content = await file.read()
         for encoding in ["utf-8-sig", "utf-8", "gbk", "latin-1"]:
@@ -1538,11 +1598,14 @@ async def import_returns(
                     summary.product_sales_rmb
                     + Decimal(str(summary.commission_usd or 0)) * exchange_rate
                     + Decimal(str(summary.fba_fee_usd or 0)) * exchange_rate
+                    + Decimal(str(summary.adjustment_usd or 0)) * exchange_rate
+                    + Decimal(str(summary.promo_rebate_usd or 0)) * exchange_rate
+                    + Decimal(str(summary.promo_rebate_tax_usd or 0)) * exchange_rate
                     - Decimal(str(summary.product_cost_rmb or 0))
                     - Decimal(str(summary.freight_cost_rmb or 0))
                     - Decimal(str(summary.ad_spend_usd or 0)) * exchange_rate
                     - Decimal(str(summary.storage_fee_usd or 0)) * exchange_rate
-                    - total_fee * exchange_rate
+                    - Decimal(str(summary.returns_fee_usd or 0)) * exchange_rate
                     - Decimal(str(summary.inbound_fee_usd or 0)) * exchange_rate
                 ).quantize(Decimal("0.01"))
 
@@ -1581,6 +1644,14 @@ async def import_inbound(
         if not country_obj:
             return {"detail": f"国家 {country} 不存在"}
         store_obj = _get_or_default_store(db, store)
+
+        # 清空该店铺+国家的旧入库费 raw 数据（防止重复导入累积）
+        clear_filters = [RawInbound.country_id == country_obj.id]
+        if store_obj:
+            clear_filters.append(RawInbound.store_id == store_obj.id)
+        else:
+            clear_filters.append(RawInbound.store_id.is_(None))
+        db.query(RawInbound).filter(*clear_filters).delete()
 
         content = await file.read()
         for encoding in ["utf-8-sig", "utf-8", "gbk", "latin-1"]:
@@ -1695,12 +1766,15 @@ async def import_inbound(
                     summary.product_sales_rmb
                     + Decimal(str(summary.commission_usd or 0)) * exchange_rate
                     + Decimal(str(summary.fba_fee_usd or 0)) * exchange_rate
+                    + Decimal(str(summary.adjustment_usd or 0)) * exchange_rate
+                    + Decimal(str(summary.promo_rebate_usd or 0)) * exchange_rate
+                    + Decimal(str(summary.promo_rebate_tax_usd or 0)) * exchange_rate
                     - Decimal(str(summary.product_cost_rmb or 0))
                     - Decimal(str(summary.freight_cost_rmb or 0))
                     - Decimal(str(summary.ad_spend_usd or 0)) * exchange_rate
                     - Decimal(str(summary.storage_fee_usd or 0)) * exchange_rate
                     - Decimal(str(summary.returns_fee_usd or 0)) * exchange_rate
-                    - total_fee * exchange_rate
+                    - Decimal(str(summary.inbound_fee_usd or 0)) * exchange_rate
                 ).quantize(Decimal("0.01"))
 
                 summary.net_profit_rmb = net
@@ -1751,28 +1825,11 @@ async def import_workbook(
         # RawAdvertising 无日期字段，按店铺+国家清空（广告数据按月独立文件，重导入即可）
         db.query(RawAdvertising).filter(RawAdvertising.store_id == store_obj.id).delete()
 
-        _clear_filters_st = [RawStorageFee.store_id == store_obj.id]
-        if import_year and import_month:
-            _ym = f"{import_year}-{import_month:02d}"
-            _clear_filters_st.append(RawStorageFee.month_of_charge.like(f"%{_ym}%"))
-        db.query(RawStorageFee).filter(*_clear_filters_st).delete()
-
-        _clear_filters_ret = [RawReturns.store_id == store_obj.id]
-        if import_year and import_month:
-            _clear_filters_ret.append(RawReturns.month_of_charge.like(f"%{import_year}-{import_month:02d}%"))
-        db.query(RawReturns).filter(*_clear_filters_ret).delete()
-
-        _clear_filters_inb = [RawInbound.store_id == store_obj.id]
-        if import_year:
-            _clear_filters_inb.append(extract('year', RawInbound.transaction_date) == import_year)
-        if import_month:
-            _clear_filters_inb.append(extract('month', RawInbound.transaction_date) == import_month)
-        db.query(RawInbound).filter(*_clear_filters_inb).delete()
-
-        _clear_filters_lts = [RawLongTermStorage.store_id == store_obj.id]
-        if import_year and import_month:
-            _clear_filters_lts.append(RawLongTermStorage.snapshot_date.like(f"%{import_year}-{import_month:02d}%"))
-        db.query(RawLongTermStorage).filter(*_clear_filters_lts).delete()
+        # 仓储费/退货/入库/长期仓储费：按店铺全量清空（这些是快照数据，每次导入应完全替换）
+        db.query(RawStorageFee).filter(RawStorageFee.store_id == store_obj.id).delete()
+        db.query(RawReturns).filter(RawReturns.store_id == store_obj.id).delete()
+        db.query(RawInbound).filter(RawInbound.store_id == store_obj.id).delete()
+        db.query(RawLongTermStorage).filter(RawLongTermStorage.store_id == store_obj.id).delete()
 
         # MonthlySummary：按店铺+月份清空
         if import_year and import_month:
@@ -2295,6 +2352,25 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
         quantity = _safe_int(row[col_qty] if col_qty is not None else 0)
         total = _parse_eu_number(row[col_total] if col_total is not None else 0)
 
+        # 费用回填：如果佣金和FBA费都为0但total≠product_sales，从差额推算缺失费用
+        if txn_type == "Order" and product_sales > 0 and total > 0:
+            other_charges = _parse_eu_number(row[col_other_fee] if col_other_fee is not None else 0) + \
+                           _parse_eu_number(row[col_promo] if col_promo is not None else 0)
+            implied_fees = product_sales - total + other_charges  # 总费用（正值）
+            captured_fees = abs(selling_fee)  # 已捕获的佣金（取绝对值）
+            if fba_fee == 0 and selling_fee == 0 and implied_fees > Decimal("0.5"):
+                # 佣金和FBA都没解析到，total已扣费→按亚马逊典型佣金率15%拆分
+                est_commission = (product_sales * Decimal("0.15")).quantize(Decimal("0.01"))
+                est_fba = implied_fees - est_commission
+                if est_fba < 0:
+                    est_commission = implied_fees
+                    est_fba = Decimal("0")
+                selling_fee = -est_commission
+                fba_fee = -est_fba
+            elif fba_fee == 0 and selling_fee != 0 and implied_fees > captured_fees + Decimal("0.5"):
+                # 佣金有值但FBA为0，从差额推算FBA
+                fba_fee = -(implied_fees - captured_fees)
+
         # 所有类型都写 raw_transactions
         raw = RawTransaction(
             country_id=country_obj.id,
@@ -2443,6 +2519,8 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
             + Decimal(str(summary.commission_usd or 0)) * er
             + Decimal(str(summary.fba_fee_usd or 0)) * er
             + Decimal(str(summary.adjustment_usd or 0)) * er
+            + Decimal(str(summary.promo_rebate_usd or 0)) * er
+            + Decimal(str(summary.promo_rebate_tax_usd or 0)) * er
             - Decimal(str(summary.product_cost_rmb or 0))
             - Decimal(str(summary.freight_cost_rmb or 0))
             - Decimal(str(summary.ad_spend_usd or 0)) * er
@@ -2886,7 +2964,7 @@ def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None, i
 
         for summary in target_summaries:
             if fee_type == "storage" or fee_type == "long_term_storage":
-                summary.storage_fee_usd = total_fee
+                summary.storage_fee_usd = (summary.storage_fee_usd or Decimal("0")) + total_fee
             elif fee_type == "returns":
                 summary.returns_fee_usd = total_fee
             elif fee_type == "inbound":
@@ -3040,6 +3118,8 @@ def _recalculate_all_profit(db, country_obj):
             + Decimal(str(summary.commission_usd or 0)) * er
             + Decimal(str(summary.fba_fee_usd or 0)) * er
             + Decimal(str(summary.adjustment_usd or 0)) * er
+            + Decimal(str(summary.promo_rebate_usd or 0)) * er
+            + Decimal(str(summary.promo_rebate_tax_usd or 0)) * er
             - summary.product_cost_rmb
             - summary.freight_cost_rmb
             - Decimal(str(summary.ad_spend_usd or 0)) * er
