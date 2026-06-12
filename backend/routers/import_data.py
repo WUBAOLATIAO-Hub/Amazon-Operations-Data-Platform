@@ -2,7 +2,7 @@ import csv
 import io
 import os
 import re
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, Query
@@ -26,14 +26,14 @@ def _detect_country_from_data(db: Session, header, rows):
     for i, h in enumerate(header):
         hl = h.lower().strip() if h else ""
         if hl == 'marketplace': mp_idx = i  # 精确匹配，避免 "marketplace withheld tax"
-        if hl in ('country_code', 'country', '国家/地区'): cc_idx = i
+        if hl in ('country_code', 'country', '国家', '国家/地区'): cc_idx = i
 
     # 已知国家列的匹配模式（精确，可包容缩写）
     _col_patterns = [
         (['mx', 'mex', 'amazon.com.mx', 'mexico'], 'MX'),
         (['ca', 'can', 'amazon.ca', 'canada'], 'CA'),
         (['au', 'aus', 'amazon.com.au', 'australia'], 'AU'),
-        (['us', 'usa', 'amazon.com', 'united states'], 'US'),
+        (['na', 'north america', 'amazon.com', 'united states', 'us', 'usa'], 'US'),
         (['uk', 'gb', 'gbr', 'amazon.co.uk', 'united kingdom'], 'UK'),
         (['de', 'deu', 'amazon.de', 'germany'], 'DE'),
         (['fr', 'fra', 'amazon.fr', 'france'], 'FR'),
@@ -273,7 +273,7 @@ def _get_or_create_monthly_summary(
 def _safe_decimal(value, default=0) -> Decimal:
     if value is None:
         return Decimal(str(default))
-    s = str(value).strip().replace(",", "").replace("$", "").replace("¥", "").replace("%", "")
+    s = str(value).strip().replace("−", "-").replace(",", "").replace("$", "").replace("¥", "").replace("%", "")
     if s == "" or s == "-":
         return Decimal(str(default))
     try:
@@ -302,6 +302,19 @@ def _safe_int(value, default=0) -> int:
         return int(float(s))
     except (ValueError, TypeError):
         return default
+
+
+def _json_safe(header, row):
+    """将 header+row 转为 JSON 安全的 dict（datetime→str, Decimal→str）"""
+    result = {}
+    for h, v in zip(header, row):
+        if isinstance(v, (datetime, date)):
+            result[h] = v.isoformat()
+        elif isinstance(v, Decimal):
+            result[h] = str(v)
+        else:
+            result[h] = v
+    return result
 
 
 def _detect_date_format(date_str: str):
@@ -612,6 +625,8 @@ async def import_transaction(
                 "marketplace withheld tax": "marketplace_withheld_tax",
                 "selling fees": "selling_fee",
                 "fba fees": "fba_fee",
+                "fulfilment by amazon fees": "fba_fee",
+                "fulfillment by amazon fees": "fba_fee",
                 "other transaction fees": "other_transaction_fee",
                 "other": "other_amount",
                 "total": "total",
@@ -1780,14 +1795,36 @@ async def import_workbook(
                              'date/heure', 'data/ora', 'data/ora:', 'datum/tijd', 'datum/tid')
         def identify_sheet(header, rows):
             """返回 (sheet_type, header, rows)"""
+            # 1. Row 1 直接匹配交易表头
             if any(h in _txn_date_headers for h in header):
-                return "transaction", header, rows
-            # Check row 10 (9 metadata rows) and row 9 (8 metadata rows, e.g. UAE)
-            for try_row in [9, 8]:
-                if len(rows) > try_row:
-                    row_h = [str(h).strip().lower() if h else "" for h in rows[try_row]]
-                    if any(h in _txn_date_headers for h in row_h) and 'sku' in row_h:
-                        return "transaction", row_h, rows[try_row + 1:]
+                return "transaction", header, rows[1:]
+
+            # 2. 扫描前15行，找交易表头行：必须同时包含 date/time 和 sku
+            _txn_keywords = {
+                'date/time', 'date / time', 'fecha/hora', 'fecha y hora', 'datum/uhrzeit',
+                'date/heure', 'data/ora', 'data/ora:', 'datum/tijd', 'datum/tid',
+                'sku', 'order id', 'bestellnummer', 'beställnings-id', 'bestelnummer',
+                'numero ordine', 'numéro de la commande', 'número de pedido',
+                'product sales', 'selling fees', 'fba fees', 'total',
+                'quantity', 'menge', 'cantidad', 'quantité', 'quantità', 'antal', 'aantal',
+                'type', 'typ', 'tipo',
+            }
+            best_score = 0
+            best_idx = -1
+            for i in range(1, min(15, len(rows))):
+                row_cells = [str(v).strip().lower() if v else "" for v in rows[i]]
+                has_date = any(c in _txn_date_headers for c in row_cells)
+                has_sku = 'sku' in row_cells
+                if has_date and has_sku:
+                    score = sum(1 for c in row_cells if c in _txn_keywords)
+                    if score > best_score:
+                        best_score = score
+                        best_idx = i
+            if best_idx >= 0:
+                row_h = [str(v).strip().lower() if v else "" for v in rows[best_idx]]
+                return "transaction", row_h, rows[best_idx + 1:]
+
+            # 3. 其他类型识别
             header_set = set(h for h in header if h)
             data_rows = rows[1:]
             if "asin" in header_set and any("成本" in h or "cost" in h for h in header):
@@ -2058,6 +2095,8 @@ def _parse_eu_number(value):
     s = str(value).strip()
     if not s or s == '-' or s == '−':
         return Decimal("0")
+    # Normalize Unicode minus (U+2212) to regular hyphen-minus
+    s = s.replace('−', '-')
     # Remove currency symbols
     s = s.replace('€', '').replace('$', '').replace('£', '').replace('%', '').strip()
     # Detect format: if has comma followed by 1-2 digits at end → European decimal
@@ -2154,6 +2193,7 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
         'tarifas fba': 'fba fees', 'tarifas de logística de amazon': 'fba fees',
         'costi del servizio logistica di amazon': 'fba fees',
         'fba-vergoedingen': 'fba fees', 'fba-avgifter': 'fba fees',
+        'fulfilment by amazon fees': 'fba fees', 'fulfillment by amazon fees': 'fba fees',
         'andere transaktionsgebühren': 'other transaction fees', 'autres frais de transaction': 'other transaction fees',
         'tarifas de otra transacción': 'other transaction fees', 'tarifas de otras transacciones': 'other transaction fees',
         'altri costi relativi alle transazioni': 'other transaction fees',
@@ -2536,7 +2576,7 @@ def _process_advertising_sheet(db, country_obj, header, rows, time_id=None, stor
             ntb_sales_usd=_safe_decimal(row[col_ntb_sales]) if col_ntb_sales is not None else Decimal("0"),
             new_to_brand_sales_pct=_safe_decimal(row[col_new_brand]) if col_new_brand is not None else Decimal("0"),
             visible_impressions=_safe_int(row[col_vis_imp]) if col_vis_imp is not None else 0,
-            raw_data=dict(zip(header, row)),
+            raw_data=_json_safe(header, row),
         )
         db.add(raw_adv)
 
@@ -2703,7 +2743,7 @@ def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None, i
                 month_of_charge=_safe_str(row[col_moc], 30) if col_moc is not None and row[col_moc] else "",
                 currency=_safe_str(row[col_currency], 50) if col_currency is not None and row[col_currency] else "",
                 estimated_monthly_storage_fee=fee,
-                raw_data=dict(zip(header, row)),
+                raw_data=_json_safe(header, row),
             )
             db.add(raw)
 
@@ -2732,7 +2772,7 @@ def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None, i
                 sku_returns_fee=fee,
                 month_of_charge=_safe_str(row[col_moc], 30) if col_moc is not None and row[col_moc] else "",
                 currency=_safe_str(row[col_currency], 50) if col_currency is not None and row[col_currency] else "",
-                raw_data=dict(zip(header, row)),
+                raw_data=_json_safe(header, row),
             )
             db.add(raw)
 
@@ -2760,7 +2800,7 @@ def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None, i
                 inbound_placement_fee_total=fee,
                 currency=_safe_str(row[col_currency], 50) if col_currency is not None and row[col_currency] else "",
                 total_fee=_safe_decimal(row[col_total]) if col_total is not None else Decimal("0"),
-                raw_data=dict(zip(header, row)),
+                raw_data=_json_safe(header, row),
             )
             db.add(raw)
 
@@ -2769,7 +2809,12 @@ def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None, i
             row_dict = {}
             for i, h in enumerate(header):
                 if h and i < len(row) and row[i] is not None:
-                    row_dict[h] = row[i]
+                    v = row[i]
+                    if isinstance(v, (datetime, date)):
+                        v = v.isoformat()
+                    elif isinstance(v, Decimal):
+                        v = str(v)
+                    row_dict[h] = v
 
             raw = RawLongTermStorage(
                 country_id=row_country.id,
