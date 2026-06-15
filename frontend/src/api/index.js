@@ -10,6 +10,9 @@ export const getDashboardSummary = (params) => api.get('/dashboard/summary', { p
 export const getDashboardTrend = (params) => api.get('/dashboard/trend', { params })
 export const getProductDistribution = (params) => api.get('/dashboard/product-distribution', { params })
 export const getCostBreakdown = (params) => api.get('/dashboard/cost-breakdown', { params })
+export const getTopReturns = (params) => api.get('/dashboard/top-returns', { params })
+export const getStoreComparison = (params) => api.get('/dashboard/store-comparison', { params })
+export const getCountryComparison = (params) => api.get('/dashboard/country-comparison', { params })
 
 // 广告
 export const getAdvertisingSummary = (params) => api.get('/advertising/summary', { params })

@@ -7,10 +7,11 @@ import {
   AccountBookOutlined,
   FireOutlined,
   AimOutlined,
+  SwapOutlined,
 } from '@ant-design/icons'
 import * as echarts from 'echarts'
 import StatCard from '../components/StatCard'
-import { getDashboardSummary, getDashboardTrend, getProductDistribution, getCostBreakdown, getStores, getCountries } from '../api'
+import { getDashboardSummary, getDashboardTrend, getProductDistribution, getCostBreakdown, getTopReturns, getStoreComparison, getCountryComparison, getStores, getCountries } from '../api'
 
 // 年份选项（最近5年）
 const currentYear = new Date().getFullYear()
@@ -55,7 +56,11 @@ export default function Dashboard() {
   const [trendData, setTrendData] = useState([])
   const [distributionData, setDistributionData] = useState([])
   const [costData, setCostData] = useState(null)
+  const [returnsData, setReturnsData] = useState([])
+  const [storeCompareData, setStoreCompareData] = useState([])
+  const [countryCompareData, setCountryCompareData] = useState([])
   const [trendMode, setTrendMode] = useState('monthly')
+  const [costMode, setCostMode] = useState('waterfall')
 
   // ECharts 容器
   const chartRef = useRef(null)
@@ -66,6 +71,16 @@ export default function Dashboard() {
   const barChartInstanceRef = useRef(null)
   const waterfallRef = useRef(null)
   const waterfallInstanceRef = useRef(null)
+  const costPieRef = useRef(null)
+  const costPieInstanceRef = useRef(null)
+  const returnsChartRef = useRef(null)
+  const returnsChartInstanceRef = useRef(null)
+  const returnsPieRef = useRef(null)
+  const returnsPieInstanceRef = useRef(null)
+  const storeChartRef = useRef(null)
+  const storeChartInstanceRef = useRef(null)
+  const countryChartRef = useRef(null)
+  const countryChartInstanceRef = useRef(null)
 
   // 获取店铺列表
   useEffect(() => {
@@ -139,10 +154,52 @@ export default function Dashboard() {
     }
   }, [country, store, year, month])
 
+  // 获取退货排名数据
+  const fetchReturns = useCallback(async () => {
+    try {
+      const params = { year, limit: 10 }
+      if (country) params.country = country
+      if (month) params.month = month
+      if (store) params.store = store
+      const res = await getTopReturns(params)
+      setReturnsData(res.data?.data || [])
+    } catch (err) {
+      console.error('获取退货数据失败', err)
+    }
+  }, [country, store, year, month])
+
+  // 获取店铺对比数据
+  const fetchStoreCompare = useCallback(async () => {
+    try {
+      const params = {}
+      if (country) params.country = country
+      if (year) params.year = year
+      if (month) params.month = month
+      const res = await getStoreComparison(params)
+      setStoreCompareData(res.data?.data || [])
+    } catch (err) {
+      console.error('获取店铺对比数据失败', err)
+    }
+  }, [country, year, month])
+
+  // 获取国家对比数据
+  const fetchCountryCompare = useCallback(async () => {
+    try {
+      const params = {}
+      if (store) params.store = store
+      if (year) params.year = year
+      if (month) params.month = month
+      const res = await getCountryComparison(params)
+      setCountryCompareData(res.data?.data || [])
+    } catch (err) {
+      console.error('获取国家对比数据失败', err)
+    }
+  }, [store, year, month])
+
   // 加载数据
   useEffect(() => {
     setLoading(true)
-    Promise.all([fetchSummary(), fetchTrend(), fetchDistribution(), fetchCostBreakdown()])
+    Promise.all([fetchSummary(), fetchTrend(), fetchDistribution(), fetchCostBreakdown(), fetchReturns(), fetchStoreCompare(), fetchCountryCompare()])
       .finally(() => setLoading(false))
   }, [fetchSummary, fetchTrend, fetchDistribution, fetchCostBreakdown])
 
@@ -479,7 +536,7 @@ export default function Dashboard() {
     }
     const chart = barChartInstanceRef.current
 
-    const barLimit = (!store && !country) ? 10 : 15
+    const barLimit = (!store && !country) ? 20 : 25
     const chartData = distributionData.slice(0, barLimit)
     const names = chartData.map(item => item.name && item.name.length > 15 ? item.name.slice(0, 15) + '...' : (item.name || '未知'))
     const salesData = chartData.map(item => item.sales_rmb)
@@ -559,6 +616,352 @@ export default function Dashboard() {
     resizeChart(chart)
   }, [distributionData, store, country])
 
+  // ============ 费用结构饼图（占销售额百分比） ============
+  useEffect(() => {
+    if (!costPieRef.current || !costData) return
+    if (!costPieInstanceRef.current) {
+      costPieInstanceRef.current = echarts.init(costPieRef.current)
+    }
+    const chart = costPieInstanceRef.current
+
+    const sales = costData.sales || 1
+    const pieData = costData.expenses
+      .filter(e => e.value > 0)
+      .map(e => ({
+        name: e.name,
+        value: Math.round(e.value),
+        pct: (e.value / sales * 100).toFixed(1),
+      }))
+
+    const option = {
+      tooltip: {
+        trigger: 'item',
+        formatter: function(params) {
+          const item = pieData.find(d => d.name === params.name)
+          const pct = item ? item.pct : params.percent
+          return `${params.name}: ¥${Number(params.value).toLocaleString()} (占销售额 ${pct}%)`
+        }
+      },
+      legend: {
+        orient: 'vertical',
+        right: '5%',
+        top: 'center',
+        type: 'scroll',
+      },
+      series: [{
+        name: '费用占比',
+        type: 'pie',
+        radius: ['40%', '70%'],
+        center: ['40%', '50%'],
+        avoidLabelOverlap: false,
+        itemStyle: { borderRadius: 10, borderColor: '#fff', borderWidth: 2 },
+        label: {
+          show: true,
+          formatter: function(params) {
+            const item = pieData.find(d => d.name === params.name)
+            const pct = item ? item.pct : params.percent
+            return `${params.name} ${pct}%`
+          },
+          fontSize: 11,
+        },
+        emphasis: {
+          label: { show: true, fontSize: 14, fontWeight: 'bold' },
+          scaleSize: 10,
+        },
+        labelLine: { show: true },
+        data: pieData,
+        animationType: 'scale',
+        animationEasing: 'elasticOut',
+        animationDelay: (idx) => idx * 80,
+      }],
+    }
+
+    chart.setOption(option, true)
+    resizeChart(chart)
+  }, [costData])
+
+  // 费用结构切换时 resize 当前显示的图表
+  useEffect(() => {
+    setTimeout(() => {
+      if (costMode === 'waterfall') resizeChart(waterfallInstanceRef.current)
+      else resizeChart(costPieInstanceRef.current)
+    }, 50)
+  }, [costMode])
+
+  // ============ 退货件数柱状图（左侧） ============
+  useEffect(() => {
+    if (!returnsChartRef.current || returnsData.length === 0) return
+    if (!returnsChartInstanceRef.current) {
+      returnsChartInstanceRef.current = echarts.init(returnsChartRef.current)
+    }
+    const chart = returnsChartInstanceRef.current
+
+    const sorted = [...returnsData].sort((a, b) => b.refund_qty - a.refund_qty)
+    const names = sorted.map(item => item.name && item.name.length > 20 ? item.name.slice(0, 20) + '...' : (item.name || '未知'))
+    const qtyData = sorted.map(item => item.refund_qty)
+
+    const option = {
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: function(params) {
+          const idx = params[0]?.dataIndex
+          const item = sorted[idx]
+          if (!item) return ''
+          return `<strong>${item.name}</strong><br/>退货件数：${item.refund_qty}件<br/>退货笔数：${item.refund_count}`
+        }
+      },
+      grid: { left: '3%', right: '4%', bottom: '3%', top: 40, containLabel: true },
+      xAxis: {
+        type: 'category',
+        data: names,
+        axisLabel: { rotate: 30, fontSize: 11 },
+      },
+      yAxis: {
+        type: 'value',
+        name: '退货件数',
+        axisLabel: { formatter: val => val.toLocaleString() },
+      },
+      series: [{
+        name: '退货件数',
+        type: 'bar',
+        data: qtyData,
+        itemStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: '#ff4d4f' },
+            { offset: 1, color: '#ff7875' },
+          ]),
+          borderRadius: [4, 4, 0, 0],
+        },
+        barMaxWidth: 40,
+        label: {
+          show: true,
+          position: 'top',
+          formatter: '{c}',
+          fontSize: 11,
+          color: '#666',
+        },
+        animationDelay: (idx) => idx * 100,
+        animationDuration: 600,
+        animationEasing: 'cubicOut',
+      }],
+    }
+    chart.setOption(option, true)
+    resizeChart(chart)
+  }, [returnsData])
+
+  // ============ 退货率饼图（右侧） ============
+  useEffect(() => {
+    if (!returnsPieRef.current || returnsData.length === 0) return
+    if (!returnsPieInstanceRef.current) {
+      returnsPieInstanceRef.current = echarts.init(returnsPieRef.current)
+    }
+    const chart = returnsPieInstanceRef.current
+
+    const sorted = [...returnsData].sort((a, b) => b.return_rate - a.return_rate)
+    const pieData = sorted.map(item => ({
+      name: item.name && item.name.length > 20 ? item.name.slice(0, 20) + '...' : (item.name || '未知'),
+      value: item.return_rate,
+    }))
+
+    const option = {
+      tooltip: {
+        trigger: 'item',
+        formatter: function(params) {
+          const idx = pieData.findIndex(d => d.name === params.name)
+          const item = sorted[idx]
+          return item
+            ? `<strong>${item.name}</strong><br/>退货率：${item.return_rate}%<br/>退货笔数：${item.refund_count} / 订单数：${item.order_count}`
+            : `${params.name}: ${params.value}%`
+        }
+      },
+      legend: {
+        orient: 'vertical',
+        right: '5%',
+        top: 'center',
+        type: 'scroll',
+      },
+      series: [{
+        name: '退货率',
+        type: 'pie',
+        radius: ['40%', '70%'],
+        center: ['40%', '50%'],
+        avoidLabelOverlap: false,
+        itemStyle: { borderRadius: 10, borderColor: '#fff', borderWidth: 2 },
+        label: {
+          show: true,
+          formatter: '{b}: {d}%',
+          fontSize: 11,
+        },
+        emphasis: {
+          label: { show: true, fontSize: 14, fontWeight: 'bold' },
+          scaleSize: 10,
+        },
+        labelLine: { show: true },
+        data: pieData,
+        animationType: 'scale',
+        animationEasing: 'elasticOut',
+        animationDelay: (idx) => idx * 80,
+      }],
+    }
+    chart.setOption(option, true)
+    resizeChart(chart)
+  }, [returnsData])
+
+  // ============ 店铺对比图 ============
+  useEffect(() => {
+    if (!storeChartRef.current || storeCompareData.length === 0) return
+    if (!storeChartInstanceRef.current) {
+      storeChartInstanceRef.current = echarts.init(storeChartRef.current)
+    }
+    const chart = storeChartInstanceRef.current
+
+    const names = storeCompareData.map(item => item.name)
+    const salesData = storeCompareData.map(item => Math.round(item.sales_rmb))
+    const profitData = storeCompareData.map(item => Math.round(item.net_profit))
+
+    const option = {
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: function(params) {
+          let html = `<strong>${params[0].axisValueLabel}</strong><br/>`
+          params.forEach(p => {
+            html += `${p.marker} ${p.seriesName}：¥${Number(p.value).toLocaleString()}<br/>`
+          })
+          const idx = params[0]?.dataIndex
+          const item = storeCompareData[idx]
+          if (item) html += `净利率：${item.profit_rate}%`
+          return html
+        }
+      },
+      legend: { data: ['销售额', '净利润'], top: 4 },
+      grid: { left: '3%', right: '4%', bottom: '3%', top: 48, containLabel: true },
+      xAxis: { type: 'category', data: names },
+      yAxis: {
+        type: 'value',
+        name: '金额 (RMB)',
+        axisLabel: { formatter: val => val >= 10000 ? (val / 10000).toFixed(1) + '万' : val.toLocaleString() },
+      },
+      series: [
+        {
+          name: '销售额',
+          type: 'bar',
+          data: salesData,
+          itemStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: '#1677ff' },
+              { offset: 1, color: '#4096ff' },
+            ]),
+            borderRadius: [4, 4, 0, 0],
+          },
+          barMaxWidth: 50,
+        },
+        {
+          name: '净利润',
+          type: 'bar',
+          data: profitData,
+          itemStyle: {
+            color: params => params.value >= 0
+              ? new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                  { offset: 0, color: '#52c41a' },
+                  { offset: 1, color: '#95de64' },
+                ])
+              : new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                  { offset: 0, color: '#cf1322' },
+                  { offset: 1, color: '#ff4d4f' },
+                ]),
+            borderRadius: [4, 4, 0, 0],
+          },
+          barMaxWidth: 50,
+        },
+      ],
+    }
+
+    chart.setOption(option, true)
+    resizeChart(chart)
+  }, [storeCompareData])
+
+  // ============ 国家对比图 ============
+  useEffect(() => {
+    if (!countryChartRef.current || countryCompareData.length === 0) return
+    if (!countryChartInstanceRef.current) {
+      countryChartInstanceRef.current = echarts.init(countryChartRef.current)
+    }
+    const chart = countryChartInstanceRef.current
+
+    const names = countryCompareData.map(item => item.name)
+    const salesData = countryCompareData.map(item => Math.round(item.sales_rmb))
+    const profitData = countryCompareData.map(item => Math.round(item.net_profit))
+
+    const option = {
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: function(params) {
+          let html = `<strong>${params[0].axisValueLabel}</strong><br/>`
+          params.forEach(p => {
+            html += `${p.marker} ${p.seriesName}：¥${Number(p.value).toLocaleString()}<br/>`
+          })
+          const idx = params[0]?.dataIndex
+          const item = countryCompareData[idx]
+          if (item) html += `净利率：${item.profit_rate}%`
+          return html
+        }
+      },
+      legend: { data: ['销售额', '净利润'], top: 4 },
+      grid: { left: '3%', right: '4%', bottom: '3%', top: 48, containLabel: true },
+      xAxis: { type: 'category', data: names, axisLabel: { rotate: 30, fontSize: 11 } },
+      yAxis: {
+        type: 'value',
+        name: '金额 (RMB)',
+        axisLabel: { formatter: val => val >= 10000 ? (val / 10000).toFixed(1) + '万' : val.toLocaleString() },
+      },
+      series: [
+        {
+          name: '销售额',
+          type: 'bar',
+          data: salesData,
+          itemStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: '#1677ff' },
+              { offset: 1, color: '#4096ff' },
+            ]),
+            borderRadius: [4, 4, 0, 0],
+          },
+          barMaxWidth: 40,
+          animationDelay: (idx) => idx * 100,
+          animationDuration: 600,
+          animationEasing: 'cubicOut',
+        },
+        {
+          name: '净利润',
+          type: 'bar',
+          data: profitData,
+          itemStyle: {
+            color: params => params.value >= 0
+              ? new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                  { offset: 0, color: '#52c41a' },
+                  { offset: 1, color: '#95de64' },
+                ])
+              : new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                  { offset: 0, color: '#cf1322' },
+                  { offset: 1, color: '#ff4d4f' },
+                ]),
+            borderRadius: [4, 4, 0, 0],
+          },
+          barMaxWidth: 40,
+          animationDelay: (idx) => idx * 100 + 50,
+          animationDuration: 600,
+          animationEasing: 'cubicOut',
+        },
+      ],
+    }
+
+    chart.setOption(option, true)
+    resizeChart(chart)
+  }, [countryCompareData])
+
   // 监听窗口 resize + cleanup
   useEffect(() => {
     const handleResize = () => {
@@ -566,6 +969,11 @@ export default function Dashboard() {
       pieChartInstanceRef.current?.resize()
       barChartInstanceRef.current?.resize()
       waterfallInstanceRef.current?.resize()
+      costPieInstanceRef.current?.resize()
+      returnsChartInstanceRef.current?.resize()
+      returnsPieInstanceRef.current?.resize()
+      storeChartInstanceRef.current?.resize()
+      countryChartInstanceRef.current?.resize()
     }
     window.addEventListener('resize', handleResize)
     return () => {
@@ -578,6 +986,16 @@ export default function Dashboard() {
       barChartInstanceRef.current = null
       waterfallInstanceRef.current?.dispose()
       waterfallInstanceRef.current = null
+      costPieInstanceRef.current?.dispose()
+      costPieInstanceRef.current = null
+      returnsChartInstanceRef.current?.dispose()
+      returnsChartInstanceRef.current = null
+      returnsPieInstanceRef.current?.dispose()
+      returnsPieInstanceRef.current = null
+      storeChartInstanceRef.current?.dispose()
+      storeChartInstanceRef.current = null
+      countryChartInstanceRef.current?.dispose()
+      countryChartInstanceRef.current = null
     }
   }, [])
 
@@ -706,6 +1124,30 @@ export default function Dashboard() {
         </Col>
       </Row>
 
+      {/* 统计卡片 — 第三行：单均指标 */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={12} sm={6} lg={3}>
+          <StatCard
+            title="客单价"
+            value={summaryData.avg_order_value ?? 0}
+            prefix="¥"
+            icon={<DollarOutlined />}
+            color="#13c2c2"
+            small
+          />
+        </Col>
+        <Col xs={12} sm={6} lg={3}>
+          <StatCard
+            title="件均"
+            value={summaryData.qty_per_order ?? 0}
+            suffix="件"
+            icon={<ShoppingCartOutlined />}
+            color="#722ed1"
+            small
+          />
+        </Col>
+      </Row>
+
       {/* 趋势图 */}
       <Card
         title="月度趋势"
@@ -724,24 +1166,88 @@ export default function Dashboard() {
         <div ref={chartRef} style={{ width: '100%', height: 400 }} />
       </Card>
 
-      {/* 费用瀑布图 + 产品饼图 */}
+      {/* 费用结构（瀑布图/占比切换） */}
+      <Card title="费用结构" style={{ marginBottom: 16 }}
+        extra={
+          <Segmented
+            options={[
+              { label: '瀑布图', value: 'waterfall' },
+              { label: '占比', value: 'pie' },
+            ]}
+            value={costMode}
+            onChange={setCostMode}
+          />
+        }
+      >
+        <div style={{ display: costMode === 'waterfall' ? 'block' : 'none' }}>
+          <div ref={waterfallRef} style={{ width: '100%', height: 400 }} />
+        </div>
+        <div style={{ display: costMode === 'pie' ? 'block' : 'none' }}>
+          <div ref={costPieRef} style={{ width: '100%', height: 400 }} />
+        </div>
+      </Card>
+
+      {/* 退货排名：件数 + 退货率 */}
       <Row gutter={16} style={{ marginBottom: 16 }}>
         <Col xs={24} lg={12}>
-          <Card title="费用结构瀑布图" style={{ height: '100%' }}>
-            <div ref={waterfallRef} style={{ width: '100%', height: 400 }} />
+          <Card title="退货排名 - 件数 (Top 10)" style={{ height: '100%' }}>
+            {returnsData.length > 0 ? (
+              <div ref={returnsChartRef} style={{ width: '100%', height: 400 }} />
+            ) : (
+              <div style={{ height: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999' }}>
+                暂无退货数据
+              </div>
+            )}
           </Card>
         </Col>
         <Col xs={24} lg={12}>
-          <Card title="产品销售占比" style={{ height: '100%' }}>
-            <div ref={pieChartRef} style={{ width: '100%', height: 400 }} />
+          <Card title="退货排名 - 退货率 (Top 10)" style={{ height: '100%' }}>
+            {returnsData.length > 0 ? (
+              <div ref={returnsPieRef} style={{ width: '100%', height: 400 }} />
+            ) : (
+              <div style={{ height: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999' }}>
+                暂无退货数据
+              </div>
+            )}
           </Card>
         </Col>
       </Row>
 
       {/* 产品柱状图 */}
-      <Card title="产品销售对比 (Top 10)">
+      <Card title="产品销售对比 (Top 20)" style={{ marginBottom: 16 }}>
         <div ref={barChartRef} style={{ width: '100%', height: 400 }} />
       </Card>
+
+      {/* 店铺对比 + 国家对比 */}
+      <Row gutter={16} style={{ marginBottom: 16 }}>
+        <Col xs={24} lg={12}>
+          <Card title="店铺对比" style={{ height: '100%' }}>
+            {storeCompareData.length > 0 ? (
+              <div ref={storeChartRef} style={{ width: '100%', height: 400 }} />
+            ) : (
+              <div style={{ height: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999' }}>
+                暂无店铺数据
+              </div>
+            )}
+          </Card>
+        </Col>
+        <Col xs={24} lg={12}>
+          <Card title="国家对比" style={{ height: '100%' }}>
+            {countryCompareData.length > 0 ? (
+              <div ref={countryChartRef} style={{ width: '100%', height: 400 }} />
+            ) : (
+              <div style={{ height: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999' }}>
+                暂无国家数据
+              </div>
+            )}
+          </Card>
+        </Col>
+      </Row>
+
+      {/* 数据更新时间 */}
+      <div style={{ textAlign: 'right', color: '#999', fontSize: 12, padding: '8px 0' }}>
+        数据更新时间：{new Date().toLocaleString('zh-CN')}
+      </div>
     </Spin>
   )
 }

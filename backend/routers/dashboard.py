@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func, extract, String
 from database import get_db
-from models import MonthlySummary, DimCountry, DimTime, DimProduct, DimStore
+from models import MonthlySummary, DimCountry, DimTime, DimProduct, DimStore, RawTransaction
 
 router = APIRouter()
 
@@ -81,6 +81,9 @@ def get_summary(
             "cvr": round(cvr, 2),
             "total_impressions": impressions,
             "total_clicks": clicks,
+            # 单均指标
+            "avg_order_value": round(float(row.total_product_sales_rmb or 0) / int(row.total_order_count or 1), 2) if int(row.total_order_count or 0) > 0 else 0,
+            "qty_per_order": round(int(row.total_order_qty or 0) / int(row.total_order_count or 1), 2) if int(row.total_order_count or 0) > 0 else 0,
         }
 
         # 环比：上个月 / 上个年（统一用加权平均）
@@ -351,6 +354,194 @@ def get_product_distribution(
                 "order_count": int(row.order_count or 0),
                 "sales_rmb": float(row.sales_rmb or 0),
                 "net_profit": float(row.net_profit or 0),
+            })
+
+        return {"data": data}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/store-comparison")
+def get_store_comparison(
+    country: str = Query(None, description="国家代码"),
+    year: int = Query(None, description="年份"),
+    month: int = Query(None, description="月份"),
+    db: Session = Depends(get_db),
+):
+    """获取店铺对比数据"""
+    try:
+        # 始终 outerjoin 所有维度表，防止 NULL 外键丢数据
+        q = db.query(
+            DimStore.code,
+            DimStore.name,
+            func.sum(MonthlySummary.product_sales_rmb).label("sales_rmb"),
+            func.sum(MonthlySummary.net_profit_rmb).label("net_profit"),
+            func.sum(MonthlySummary.order_count).label("order_count"),
+            func.coalesce(
+                func.sum(MonthlySummary.net_profit_rmb) / func.nullif(func.sum(MonthlySummary.product_sales_rmb), 0),
+                0
+            ).label("profit_rate"),
+        ).outerjoin(DimStore, MonthlySummary.store_id == DimStore.id
+        ).outerjoin(DimCountry, MonthlySummary.country_id == DimCountry.id
+        ).outerjoin(DimTime, MonthlySummary.time_id == DimTime.id)
+
+        if country:
+            q = q.filter(DimCountry.code == country.upper())
+        if year:
+            q = q.filter(DimTime.time_year == year)
+        if month:
+            q = q.filter(DimTime.time_month == month)
+
+        q = q.group_by(DimStore.code, DimStore.name).order_by(func.sum(MonthlySummary.net_profit_rmb).desc())
+        rows = q.all()
+
+        data = []
+        for row in rows:
+            data.append({
+                "code": row.code or "",
+                "name": row.name or "未知店铺",
+                "sales_rmb": float(row.sales_rmb or 0),
+                "net_profit": float(row.net_profit or 0),
+                "order_count": int(row.order_count or 0),
+                "profit_rate": round(float(row.profit_rate or 0) * 100, 1),
+            })
+
+        return {"data": data}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/country-comparison")
+def get_country_comparison(
+    store: str = Query(None, description="店铺代码"),
+    year: int = Query(None, description="年份"),
+    month: int = Query(None, description="月份"),
+    db: Session = Depends(get_db),
+):
+    """获取国家对比数据"""
+    try:
+        q = db.query(
+            DimCountry.code,
+            DimCountry.name,
+            func.sum(MonthlySummary.product_sales_rmb).label("sales_rmb"),
+            func.sum(MonthlySummary.net_profit_rmb).label("net_profit"),
+            func.sum(MonthlySummary.order_count).label("order_count"),
+            func.coalesce(
+                func.sum(MonthlySummary.net_profit_rmb) / func.nullif(func.sum(MonthlySummary.product_sales_rmb), 0),
+                0
+            ).label("profit_rate"),
+        ).outerjoin(DimCountry, MonthlySummary.country_id == DimCountry.id
+        ).outerjoin(DimStore, MonthlySummary.store_id == DimStore.id
+        ).outerjoin(DimTime, MonthlySummary.time_id == DimTime.id)
+
+        if store:
+            q = q.filter(DimStore.code == store)
+        if year:
+            q = q.filter(DimTime.time_year == year)
+        if month:
+            q = q.filter(DimTime.time_month == month)
+
+        q = q.group_by(DimCountry.code, DimCountry.name).order_by(func.sum(MonthlySummary.net_profit_rmb).desc())
+        rows = q.all()
+
+        data = []
+        for row in rows:
+            data.append({
+                "code": row.code or "",
+                "name": row.name or "未知国家",
+                "sales_rmb": float(row.sales_rmb or 0),
+                "net_profit": float(row.net_profit or 0),
+                "order_count": int(row.order_count or 0),
+                "profit_rate": round(float(row.profit_rate or 0) * 100, 1),
+            })
+
+        return {"data": data}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/top-returns")
+def get_top_returns(
+    country: str = Query(None, description="国家代码"),
+    store: str = Query(None, description="店铺代码"),
+    year: int = Query(None, description="年份"),
+    month: int = Query(None, description="月份"),
+    limit: int = Query(10, description="返回数量"),
+    db: Session = Depends(get_db),
+):
+    """获取退货最高的产品（从 raw_transactions 的 Refund 记录）"""
+    try:
+        # 1. 退货汇总：按 SKU 聚合 Refund 记录
+        refund_q = db.query(
+            RawTransaction.sku,
+            func.count(RawTransaction.id).label("refund_count"),
+            func.sum(func.abs(RawTransaction.total)).label("refund_amount"),
+            func.sum(func.abs(RawTransaction.quantity)).label("refund_qty"),
+        ).filter(RawTransaction.transaction_type == "Refund")
+
+        if country:
+            refund_q = refund_q.join(DimCountry, RawTransaction.country_id == DimCountry.id).filter(DimCountry.code == country.upper())
+        if store:
+            refund_q = refund_q.join(DimStore, RawTransaction.store_id == DimStore.id).filter(DimStore.code == store)
+        if year:
+            refund_q = refund_q.filter(extract('year', RawTransaction.transaction_date) == year)
+        if month:
+            refund_q = refund_q.filter(extract('month', RawTransaction.transaction_date) == month)
+
+        refund_q = refund_q.group_by(RawTransaction.sku).order_by(func.sum(func.abs(RawTransaction.total)).desc()).limit(limit)
+        refund_rows = refund_q.all()
+
+        if not refund_rows:
+            return {"data": []}
+
+        # 2. 这些 SKU 的总订单数（用于算退货率）
+        sku_list = [r.sku for r in refund_rows]
+        order_q = db.query(
+            RawTransaction.sku,
+            func.count(RawTransaction.id).label("order_count"),
+            func.sum(func.abs(RawTransaction.quantity)).label("order_qty"),
+        ).filter(
+            RawTransaction.transaction_type == "Order",
+            RawTransaction.sku.in_(sku_list)
+        )
+        if year:
+            order_q = order_q.filter(extract('year', RawTransaction.transaction_date) == year)
+        if month:
+            order_q = order_q.filter(extract('month', RawTransaction.transaction_date) == month)
+        order_q = order_q.group_by(RawTransaction.sku)
+        order_map = {r.sku: r for r in order_q.all()}
+
+        # 3. 查产品名（dim_product 通过 sku 关联）
+        product_q = db.query(DimProduct.sku, DimProduct.product_name, DimProduct.color, DimProduct.asin).filter(
+            DimProduct.sku.in_(sku_list)
+        )
+        product_map = {p.sku: p for p in product_q.all()}
+
+        # 4. 组装结果
+        data = []
+        for r in refund_rows:
+            p = product_map.get(r.sku)
+            pname = p.product_name if p and p.product_name else "未知产品"
+            name = f"{pname} ({p.color})" if p and p.color else pname
+            o = order_map.get(r.sku)
+            order_count = int(o.order_count or 0) if o else 0
+            order_qty = int(o.order_qty or 0) if o else 0
+            refund_count = int(r.refund_count or 0)
+            refund_qty = int(r.refund_qty or 0)
+
+            data.append({
+                "name": name,
+                "asin": p.asin if p else "",
+                "sku": r.sku,
+                "refund_amount": round(float(r.refund_amount or 0), 2),
+                "refund_count": refund_count,
+                "refund_qty": refund_qty,
+                "order_count": order_count,
+                "return_rate": round(refund_count / order_count * 100, 1) if order_count > 0 else 0,
+                "qty_per_order": round(refund_qty / refund_count, 2) if refund_count > 0 else 0,
             })
 
         return {"data": data}
