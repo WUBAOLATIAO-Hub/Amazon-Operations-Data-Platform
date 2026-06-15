@@ -212,7 +212,8 @@ def get_product_distribution(
 
         data = []
         for row in rows:
-            name = f"{row.product_name} ({row.color})" if row.color else row.product_name
+            pname = row.product_name or "未知产品"
+            name = f"{pname} ({row.color})" if row.color else pname
             data.append({
                 "name": name,
                 "product_name": row.product_name,

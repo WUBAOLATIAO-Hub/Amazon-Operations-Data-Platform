@@ -45,6 +45,16 @@ class DimProductCost(Base):
     exchange_rate = Column(Numeric(10, 4), nullable=True)
 
 
+class DimFreight(Base):
+    """按国家独立运费（如英国/爱尔兰运费不同于通用运费时使用）"""
+    __tablename__ = "dim_freight"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    product_id = Column(Integer, ForeignKey("dim_product.id"), nullable=False)
+    country_id = Column(Integer, ForeignKey("dim_country.id"), nullable=False)
+    store_id = Column(Integer, ForeignKey("dim_store.id"), nullable=True)
+    freight_rmb = Column(Numeric(10, 2), nullable=False)
+
+
 class DimTime(Base):
     __tablename__ = "dim_time"
     id = Column(Integer, primary_key=True, autoincrement=True)

@@ -11,7 +11,7 @@ from sqlalchemy import func
 
 from database import get_db
 from models import (
-    DimCountry, DimProduct, DimProductCost, DimTime, DimStore, DimExchangeRate, MonthlySummary, RawTransaction,
+    DimCountry, DimProduct, DimProductCost, DimFreight, DimTime, DimStore, DimExchangeRate, MonthlySummary, RawTransaction,
     RawAdvertising, RawStorageFee, RawReturns, RawInbound, RawLongTermStorage,
 )
 from config import UPLOAD_DIR
@@ -843,6 +843,20 @@ async def import_transaction(
                 pc = db.query(DimProductCost).filter(DimProductCost.product_id == product.id).first()
             unit_cost = Decimal(str(pc.cost_rmb if pc else 0))
             unit_freight = Decimal(str(pc.freight_per_unit if pc else 0))
+            # 检查是否有该国家的独立运费（dim_freight），有则覆盖默认运费
+            if store_obj:
+                df = db.query(DimFreight).filter(
+                    DimFreight.product_id == product.id,
+                    DimFreight.country_id == country_obj.id,
+                    DimFreight.store_id == store_obj.id,
+                ).first()
+            else:
+                df = db.query(DimFreight).filter(
+                    DimFreight.product_id == product.id,
+                    DimFreight.country_id == country_obj.id,
+                ).first()
+            if df:
+                unit_freight = Decimal(str(df.freight_rmb))
             cost_rmb = (unit_cost * agg["order_qty"]).quantize(Decimal("0.01"))
             freight_rmb = (unit_freight * agg["order_qty"]).quantize(Decimal("0.01"))
 
@@ -890,7 +904,15 @@ async def import_transaction(
                     pc = db.query(DimProductCost).filter(DimProductCost.product_id == product.id).first()
                 if pc:
                     summary.product_cost_rmb = (Decimal(str(pc.cost_rmb or 0)) * summary.order_qty).quantize(Decimal("0.01"))
-                    summary.freight_cost_rmb = (Decimal(str(pc.freight_per_unit or 0)) * summary.order_qty).quantize(Decimal("0.01"))
+                    adj_freight = Decimal(str(pc.freight_per_unit or 0))
+                    # 检查国家独立运费
+                    if store_obj:
+                        df = db.query(DimFreight).filter(DimFreight.product_id == product.id, DimFreight.country_id == country_obj.id, DimFreight.store_id == store_obj.id).first()
+                    else:
+                        df = db.query(DimFreight).filter(DimFreight.product_id == product.id, DimFreight.country_id == country_obj.id).first()
+                    if df:
+                        adj_freight = Decimal(str(df.freight_rmb))
+                    summary.freight_cost_rmb = (adj_freight * summary.order_qty).quantize(Decimal("0.01"))
             # 重算净利润
             er = exchange_rate
             net = (
@@ -935,10 +957,13 @@ async def import_transaction(
 @router.post("/product-info")
 async def import_product_info(
     file: UploadFile = File(...),
+    store: str = Form(None, description="店铺代码"),
     db: Session = Depends(get_db),
 ):
     try:
         import openpyxl
+
+        store_obj = _get_or_default_store(db, store)
 
         content = await file.read()
         wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True)
@@ -952,8 +977,8 @@ async def import_product_info(
 
         # 找列索引（精确匹配优先，避免 "产品" 误匹配 "产品运费/台"）
         col_map = {}
-        field_names = ["ASIN", "SKU", "产品", "颜色", "成本RMB", "产品运费/台", "汇率", "时间",
-                       "英国运费", "爱尔兰运费", "其他站点运费", "英国站运费", "运费", "爱尔兰站运费"]
+        field_names = ["ASIN", "SKU", "产品", "型号", "颜色", "成本RMB", "产品运费/台", "汇率", "时间",
+                       "英国运费", "爱尔兰运费", "其他站点运费", "英国站运费", "英国站点运费", "运费", "爱尔兰站运费", "爱尔兰站点运费"]
         for i, h in enumerate(header):
             for fn in field_names:
                 if h == fn:           # 精确匹配
@@ -968,6 +993,20 @@ async def import_product_info(
         if "ASIN" not in col_map:
             return {"detail": "未找到 ASIN 列"}
 
+        # 检测是否有独立国家运费列（英国/爱尔兰）
+        _country_freight_map = {
+            "英国站运费": "UK", "英国站点运费": "UK", "英国运费": "UK",
+            "爱尔兰站运费": "IE", "爱尔兰站点运费": "IE", "爱尔兰运费": "IE",
+        }
+        has_country_freight = any(k in col_map for k in _country_freight_map)
+        # 预查国家 ID
+        country_freight_ids = {}  # "UK" -> country_id, "IE" -> country_id
+        if has_country_freight:
+            for code in set(_country_freight_map.values()):
+                c = db.query(DimCountry).filter(DimCountry.code == code).first()
+                if c:
+                    country_freight_ids[code] = c.id
+
         count = 0
         for row in rows[1:]:
             if not row or not row[col_map["ASIN"]]:
@@ -975,15 +1014,29 @@ async def import_product_info(
 
             asin = str(row[col_map["ASIN"]]).strip()
             sku = str(row[col_map.get("SKU", 1)]).strip() if "SKU" in col_map and row[col_map["SKU"]] else None
-            product_name = str(row[col_map.get("产品", 2)]).strip() if "产品" in col_map and row[col_map["产品"]] else None
+            # 产品名称：优先"产品"列，fallback到"型号"列
+            pn_key = "产品" if "产品" in col_map else ("型号" if "型号" in col_map else None)
+            product_name = str(row[col_map[pn_key]]).strip() if pn_key and pn_key in col_map and row[col_map[pn_key]] else None
             color = str(row[col_map.get("颜色", 3)]).strip() if "颜色" in col_map and row[col_map["颜色"]] else None
             cost_rmb = _safe_decimal(row[col_map["成本RMB"]]) if "成本RMB" in col_map else Decimal("0")
-            # 运费：优先 产品运费/台，其次 运费/其他站点运费（通用），再 英国运费/英国站运费
-            freight = Decimal("0")
-            for fk in ["产品运费/台", "运费", "其他站点运费", "英国运费", "英国站运费"]:
-                if fk in col_map and row[col_map[fk]]:
-                    freight = _safe_decimal(row[col_map[fk]])
-                    break
+
+            # 运费逻辑：
+            # - 有独立国家运费列时：用"运费"/"产品运费/台"作为默认运费，国家运费写 dim_freight
+            # - 无独立国家运费列时：按优先级取一个值作为通用运费
+            if has_country_freight:
+                # 默认运费：优先"产品运费/台"，其次"运费"
+                freight = Decimal("0")
+                for fk in ["产品运费/台", "运费"]:
+                    if fk in col_map and row[col_map[fk]]:
+                        freight = _safe_decimal(row[col_map[fk]])
+                        break
+            else:
+                freight = Decimal("0")
+                for fk in ["产品运费/台", "运费", "其他站点运费", "英国运费", "英国站运费", "英国站点运费"]:
+                    if fk in col_map and row[col_map[fk]]:
+                        freight = _safe_decimal(row[col_map[fk]])
+                        break
+
             exchange_rate = _safe_decimal(row[col_map["汇率"]]) if "汇率" in col_map else None
             time_val = str(row[col_map["时间"]]).strip() if "时间" in col_map and row[col_map["时间"]] else None
 
@@ -1015,6 +1068,19 @@ async def import_product_info(
                 ).first()
                 if not existing_cost:
                     db.add(DimProductCost(product_id=product.id, year_month=ym, cost_rmb=cost_rmb, freight_per_unit=freight))
+
+            # 独立国家运费写入 dim_freight（upsert）
+            if has_country_freight and store_obj:
+                for col_name, country_code in _country_freight_map.items():
+                    if col_name in col_map and row[col_map[col_name]]:
+                        cf_val = _safe_decimal(row[col_map[col_name]])
+                        if cf_val > 0 and country_code in country_freight_ids:
+                            from sqlalchemy import text as _text
+                            db.execute(_text("""
+                                INSERT INTO dim_freight (product_id, country_id, store_id, freight_rmb)
+                                VALUES (:pid, :cid, :sid, :freight)
+                                ON DUPLICATE KEY UPDATE freight_rmb = VALUES(freight_rmb)
+                            """), {"pid": product.id, "cid": country_freight_ids[country_code], "sid": store_obj.id, "freight": cf_val})
 
             count += 1
 
@@ -2006,7 +2072,7 @@ async def import_workbook(
 
         for sheet_name, header, rows in product_info_sheets:
             try:
-                result = _process_product_info_sheet(db, header, rows, import_year=import_year, import_month=import_month)
+                result = _process_product_info_sheet(db, header, rows, import_year=import_year, import_month=import_month, store_id=store_obj.id if store_obj else None)
                 results[sheet_name] = {"status": "success", "type": "product_info", **result}
             except Exception as e:
                 results[sheet_name] = {"status": "error", "type": "product_info", "detail": str(e)}
@@ -2487,6 +2553,13 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
             pc = db.query(DimProductCost).filter(DimProductCost.product_id == product.id).first()
         unit_cost = Decimal(str(pc.cost_rmb if pc else 0))
         unit_freight = Decimal(str(pc.freight_per_unit if pc else 0))
+        # 检查国家独立运费
+        if store_id:
+            df = db.query(DimFreight).filter(DimFreight.product_id == product.id, DimFreight.country_id == country_obj.id, DimFreight.store_id == store_id).first()
+        else:
+            df = db.query(DimFreight).filter(DimFreight.product_id == product.id, DimFreight.country_id == country_obj.id).first()
+        if df:
+            unit_freight = Decimal(str(df.freight_rmb))
         cost_rmb = (unit_cost * agg["order_qty"]).quantize(Decimal("0.01"))
         freight_rmb = (unit_freight * agg["order_qty"]).quantize(Decimal("0.01"))
         summary.product_cost_rmb = cost_rmb
@@ -2511,7 +2584,15 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
                 pc = db.query(DimProductCost).filter(DimProductCost.product_id == product.id).first()
             if pc:
                 summary.product_cost_rmb = (Decimal(str(pc.cost_rmb or 0)) * summary.order_qty).quantize(Decimal("0.01"))
-                summary.freight_cost_rmb = (Decimal(str(pc.freight_per_unit or 0)) * summary.order_qty).quantize(Decimal("0.01"))
+                adj_freight = Decimal(str(pc.freight_per_unit or 0))
+                # 检查国家独立运费
+                if store_id:
+                    df = db.query(DimFreight).filter(DimFreight.product_id == product.id, DimFreight.country_id == country_obj.id, DimFreight.store_id == store_id).first()
+                else:
+                    df = db.query(DimFreight).filter(DimFreight.product_id == product.id, DimFreight.country_id == country_obj.id).first()
+                if df:
+                    adj_freight = Decimal(str(df.freight_rmb))
+                summary.freight_cost_rmb = (adj_freight * summary.order_qty).quantize(Decimal("0.01"))
         # 重算净利润
         er = exchange_rate
         net = (
@@ -2536,15 +2617,29 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
     return {"raw_rows": raw_count, "summary_rows": summary_count}
 
 
-def _process_product_info_sheet(db, header, rows, import_year=None, import_month=None):
+def _process_product_info_sheet(db, header, rows, import_year=None, import_month=None, store_id=None):
     """处理产品信息 sheet"""
     col_asin = _find_col(header, "asin")
     col_sku = _find_col(header, "sku")
-    col_name = _find_col(header, "产品", "product")
+    col_name = _find_col(header, "产品", "型号", "product")
     col_color = _find_col(header, "颜色", "color")
     col_cost = _find_col(header, "成本RMB", "成本", "cost")
-    col_freight = _find_col(header, "产品运费/台", "运费", "其他站点运费", "英国运费", "英国站运费", "freight")
+    col_freight = _find_col(header, "产品运费/台", "运费", "其他站点运费", "英国运费", "英国站运费", "英国站点运费", "freight")
     col_time = _find_col(header, "时间", "time")
+
+    # 检测独立国家运费列
+    _country_freight_cols = {
+        _find_col(header, "英国站运费", "英国站点运费", "英国运费"): "UK",
+        _find_col(header, "爱尔兰站运费", "爱尔兰站点运费", "爱尔兰运费"): "IE",
+    }
+    _country_freight_cols = {k: v for k, v in _country_freight_cols.items() if k is not None}
+    has_country_freight = len(_country_freight_cols) > 0
+    country_freight_ids = {}
+    if has_country_freight:
+        for code in set(_country_freight_cols.values()):
+            c = db.query(DimCountry).filter(DimCountry.code == code).first()
+            if c:
+                country_freight_ids[code] = c.id
 
     if col_asin is None:
         return {"rows": 0, "error": "缺少 ASIN 列"}
@@ -2559,7 +2654,17 @@ def _process_product_info_sheet(db, header, rows, import_year=None, import_month
         name = str(row[col_name]).strip() if col_name is not None and row[col_name] else None
         color = str(row[col_color]).strip() if col_color is not None and row[col_color] else None
         cost = _safe_decimal(row[col_cost]) if col_cost is not None else Decimal("0")
-        freight = _safe_decimal(row[col_freight]) if col_freight is not None else Decimal("0")
+
+        # 运费：有独立国家运费列时，用通用运费作为默认；否则按优先级取值
+        if has_country_freight:
+            freight = Decimal("0")
+            for fk in ["产品运费/台", "运费"]:
+                idx = _find_col(header, fk)
+                if idx is not None and row[idx]:
+                    freight = _safe_decimal(row[idx])
+                    break
+        else:
+            freight = _safe_decimal(row[col_freight]) if col_freight is not None else Decimal("0")
 
         product = db.query(DimProduct).filter(DimProduct.asin == asin).first()
         if not product:
@@ -2583,6 +2688,20 @@ def _process_product_info_sheet(db, header, rows, import_year=None, import_month
             pc = db.query(DimProductCost).filter(DimProductCost.product_id == product.id, DimProductCost.year_month == ym).first()
             if not pc:
                 db.add(DimProductCost(product_id=product.id, year_month=ym, cost_rmb=cost, freight_per_unit=freight))
+
+        # 独立国家运费写入 dim_freight（upsert）
+        if has_country_freight and store_id:
+            for col_idx, country_code in _country_freight_cols.items():
+                if row[col_idx]:
+                    cf_val = _safe_decimal(row[col_idx])
+                    if cf_val > 0 and country_code in country_freight_ids:
+                        from sqlalchemy import text as _text
+                        db.execute(_text("""
+                            INSERT INTO dim_freight (product_id, country_id, store_id, freight_rmb)
+                            VALUES (:pid, :cid, :sid, :freight)
+                            ON DUPLICATE KEY UPDATE freight_rmb = VALUES(freight_rmb)
+                        """), {"pid": product.id, "cid": country_freight_ids[country_code], "sid": store_id, "freight": cf_val})
+
         count += 1
 
     return {"rows": count}
@@ -2774,6 +2893,7 @@ def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None, i
         return None
 
     asin_fees = {}  # (country_id, asin, month_str) -> Decimal
+    asin_names = {}  # asin -> product_name（从原始数据中收集，用于回填空名称）
     row_count = 0
     # 使用导入时选择的年月，不从数据中解析
     _import_ym = f"{import_year}-{import_month:02d}" if import_year and import_month else None
@@ -2824,6 +2944,11 @@ def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None, i
                 raw_data=_json_safe(header, row),
             )
             db.add(raw)
+            # 收集产品名称用于回填
+            if col_pname is not None and row[col_pname]:
+                pname = _safe_str(row[col_pname], 500)
+                if pname and asin not in asin_names:
+                    asin_names[asin] = pname
 
         elif fee_type == "returns":
             col_fnsku = _find_col(header, "fnsku")
@@ -2853,6 +2978,10 @@ def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None, i
                 raw_data=_json_safe(header, row),
             )
             db.add(raw)
+            if col_pname is not None and row[col_pname]:
+                pname = _safe_str(row[col_pname], 500)
+                if pname and asin not in asin_names:
+                    asin_names[asin] = pname
 
         elif fee_type == "inbound":
             col_fnsku = _find_col(header, "fnsku", "FNSKU")
@@ -2914,12 +3043,22 @@ def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None, i
                 raw_data=row_dict,  # row_dict 本身就是 header→value 的映射
             )
             db.add(raw)
+            pname_lts = _safe_str(row_dict.get("product-name", row_dict.get("product_name", "")), 500)
+            if pname_lts and asin not in asin_names:
+                asin_names[asin] = pname_lts
 
         key = (row_country.id, asin, month_str)
         if key not in asin_fees:
             asin_fees[key] = Decimal("0")
         asin_fees[key] += fee
         row_count += 1
+
+    # 回填空产品名称
+    if asin_names:
+        for asin, pname in asin_names.items():
+            product = db.query(DimProduct).filter(DimProduct.asin == asin).first()
+            if product and not product.product_name:
+                product.product_name = pname
 
     summary_count = 0
 
@@ -3102,6 +3241,14 @@ def _recalculate_all_profit(db, country_obj):
                 freight_per_unit = Decimal(str(pc.freight_per_unit or 0))
         # 按月度汇率换算（店铺专属 → 按国家默认值）
         er = _get_exchange_rate(db, country_obj, int(ym.split("-")[0]) if ym else None, int(ym.split("-")[1]) if ym and "-" in ym else None, store_id=summary.store_id)
+
+        # 检查国家独立运费
+        if summary.store_id:
+            df = db.query(DimFreight).filter(DimFreight.product_id == product.id, DimFreight.country_id == country_obj.id, DimFreight.store_id == summary.store_id).first()
+        else:
+            df = db.query(DimFreight).filter(DimFreight.product_id == product.id, DimFreight.country_id == country_obj.id).first()
+        if df:
+            freight_per_unit = Decimal(str(df.freight_rmb))
 
         summary.product_cost_rmb = (cost_per_unit * order_qty).quantize(Decimal("0.01"))
         summary.freight_cost_rmb = (freight_per_unit * order_qty).quantize(Decimal("0.01"))

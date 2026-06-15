@@ -133,20 +133,27 @@ export default function Dashboard() {
   const summaryData = summary?.current || {}
   const changeData = summary?.change_percent || {}
 
-  // 初始化/更新 ECharts
+  // 辅助：确保图表容器有尺寸后 resize
+  const resizeChart = (chart) => {
+    if (chart) {
+      chart.resize()
+      // 双重保障：下一帧再 resize 一次（应对 Card 布局延迟）
+      requestAnimationFrame(() => chart.resize())
+    }
+  }
+
+  // 初始化/更新折线图
   useEffect(() => {
     if (!chartRef.current) return
 
-    // 初始化图表实例
     if (!chartInstanceRef.current) {
       chartInstanceRef.current = echarts.init(chartRef.current)
     }
     const chart = chartInstanceRef.current
 
-    // 构建图表数据
     const labels = trendData.map((item) => item.label || item.month || item.period)
-    const profitData = trendData.map((item) => item.profit_rmb ?? item.profit ?? 0)
-    const salesData = trendData.map((item) => item.sales_rmb ?? item.sales ?? 0)
+    const profitData = trendData.map((item) => item.net_profit ?? item.profit_rmb ?? item.profit ?? 0)
+    const salesData = trendData.map((item) => item.sales ?? item.sales_rmb ?? 0)
 
     const option = {
       tooltip: {
@@ -225,6 +232,7 @@ export default function Dashboard() {
     }
 
     chart.setOption(option, true)
+    resizeChart(chart)
   }, [trendData])
 
   // 初始化/更新饼图
@@ -236,9 +244,11 @@ export default function Dashboard() {
     }
     const chart = pieChartInstanceRef.current
 
-    // 饼图: Top15 + 其他
     const pieLimit = (!store && !country) ? 10 : 15
-    let pieData = distributionData.slice(0, pieLimit).map(item => ({ name: item.name, value: item.sales_rmb }))
+    let pieData = distributionData.slice(0, pieLimit).map(item => ({
+      name: item.name && item.name.length > 20 ? item.name.slice(0, 20) + '...' : (item.name || '未知'),
+      value: item.sales_rmb,
+    }))
     const rest = distributionData.slice(pieLimit).reduce((s, i) => s + (i.sales_rmb || 0), 0)
     if (rest > 0) pieData.push({ name: '其他', value: rest })
 
@@ -274,6 +284,7 @@ export default function Dashboard() {
     }
 
     chart.setOption(option, true)
+    resizeChart(chart)
   }, [distributionData, store, country])
 
   // 初始化/更新柱状图
@@ -287,7 +298,7 @@ export default function Dashboard() {
 
     const barLimit = (!store && !country) ? 10 : 15
     const chartData = distributionData.slice(0, barLimit)
-    const names = chartData.map(item => item.name)
+    const names = chartData.map(item => item.name && item.name.length > 15 ? item.name.slice(0, 15) + '...' : (item.name || '未知'))
     const salesData = chartData.map(item => item.sales_rmb)
     const profitData = chartData.map(item => item.net_profit)
 
@@ -341,9 +352,10 @@ export default function Dashboard() {
     }
 
     chart.setOption(option, true)
+    resizeChart(chart)
   }, [distributionData, store, country])
 
-  // 监听窗口 resize
+  // 监听窗口 resize + cleanup
   useEffect(() => {
     const handleResize = () => {
       chartInstanceRef.current?.resize()
@@ -353,19 +365,12 @@ export default function Dashboard() {
     window.addEventListener('resize', handleResize)
     return () => {
       window.removeEventListener('resize', handleResize)
-      // cleanup：销毁图表实例
-      if (chartInstanceRef.current) {
-        chartInstanceRef.current.dispose()
-        chartInstanceRef.current = null
-      }
-      if (pieChartInstanceRef.current) {
-        pieChartInstanceRef.current.dispose()
-        pieChartInstanceRef.current = null
-      }
-      if (barChartInstanceRef.current) {
-        barChartInstanceRef.current.dispose()
-        barChartInstanceRef.current = null
-      }
+      chartInstanceRef.current?.dispose()
+      chartInstanceRef.current = null
+      pieChartInstanceRef.current?.dispose()
+      pieChartInstanceRef.current = null
+      barChartInstanceRef.current?.dispose()
+      barChartInstanceRef.current = null
     }
   }, [])
 

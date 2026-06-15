@@ -466,12 +466,17 @@ def import_products():
     for _, row in df.iterrows():
         asin = str(row["ASIN"]).strip()
         sku = str(row["SKU"]).strip()
-        product_name = str(row.get("产品", "")).strip() if pd.notna(row.get("产品")) else None
+        # 产品名称：优先"产品"列，fallback到"型号"列
+        pn_val = row.get("产品") if "产品" in row.index and pd.notna(row.get("产品")) else (row.get("型号") if "型号" in row.index and pd.notna(row.get("型号")) else None)
+        product_name = str(pn_val).strip() if pn_val else None
         color = str(row.get("颜色", "")).strip() if pd.notna(row.get("颜色")) else None
         cost_rmb = float(row["成本RMB"]) if pd.notna(row["成本RMB"]) else 0
-        freight_uk = float(row["英国站运费"]) if pd.notna(row["英国站运费"]) else 0
-        freight_default = float(row["运费"]) if pd.notna(row["运费"]) else 0
-        freight_ie = float(row["爱尔兰站运费"]) if pd.notna(row["爱尔兰站运费"]) else 0
+        # 运费列名兼容：英国站运费/英国站点运费，爱尔兰站运费/爱尔兰站点运费
+        freight_uk_col = "英国站点运费" if "英国站点运费" in row.index else "英国站运费"
+        freight_ie_col = "爱尔兰站点运费" if "爱尔兰站点运费" in row.index else "爱尔兰站运费"
+        freight_uk = float(row[freight_uk_col]) if freight_uk_col in row.index and pd.notna(row[freight_uk_col]) else 0
+        freight_default = float(row["运费"]) if "运费" in row.index and pd.notna(row["运费"]) else 0
+        freight_ie = float(row[freight_ie_col]) if freight_ie_col in row.index and pd.notna(row[freight_ie_col]) else 0
         weight = 0  # 产品表没有重量列，后续可补充
 
         if not asin or asin == "nan":
