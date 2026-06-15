@@ -1,17 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { Row, Col, Select, Card, Spin, message, Segmented } from 'antd'
+import { Row, Col, Select, Card, Spin, message, Segmented, Tooltip } from 'antd'
 import {
   DollarOutlined,
   ShoppingCartOutlined,
   PercentageOutlined,
   AccountBookOutlined,
+  FireOutlined,
+  AimOutlined,
 } from '@ant-design/icons'
 import * as echarts from 'echarts'
 import StatCard from '../components/StatCard'
-import { getDashboardSummary, getDashboardTrend, getProductDistribution, getStores, getCountries } from '../api'
-
-// 国家选项
-const COUNTRY_OPTIONS = [{ value: '', label: '全部国家' }]
+import { getDashboardSummary, getDashboardTrend, getProductDistribution, getCostBreakdown, getStores, getCountries } from '../api'
 
 // 年份选项（最近5年）
 const currentYear = new Date().getFullYear()
@@ -45,17 +44,18 @@ export default function Dashboard() {
   // 筛选状态
   const [country, setCountry] = useState('')
   const [year, setYear] = useState(currentYear)
-  const [month, setMonth] = useState(5)  // 默认5月，与DataQuery保持一致
+  const [month, setMonth] = useState(new Date().getMonth() + 1)  // 默认当前月
   const [store, setStore] = useState('')
   const [storeOptions, setStoreOptions] = useState([])
-  const [countryOptions, setCountryOptions] = useState(COUNTRY_OPTIONS)
+  const [countryOptions, setCountryOptions] = useState([{ value: '', label: '全部国家' }])
 
   // 数据状态
   const [loading, setLoading] = useState(false)
   const [summary, setSummary] = useState(null)
   const [trendData, setTrendData] = useState([])
   const [distributionData, setDistributionData] = useState([])
-  const [trendMode, setTrendMode] = useState('monthly') // monthly | yearly
+  const [costData, setCostData] = useState(null)
+  const [trendMode, setTrendMode] = useState('monthly')
 
   // ECharts 容器
   const chartRef = useRef(null)
@@ -64,6 +64,8 @@ export default function Dashboard() {
   const pieChartInstanceRef = useRef(null)
   const barChartRef = useRef(null)
   const barChartInstanceRef = useRef(null)
+  const waterfallRef = useRef(null)
+  const waterfallInstanceRef = useRef(null)
 
   // 获取店铺列表
   useEffect(() => {
@@ -123,11 +125,26 @@ export default function Dashboard() {
     }
   }, [country, store, year, month])
 
+  // 获取费用拆分数据
+  const fetchCostBreakdown = useCallback(async () => {
+    try {
+      const params = { year }
+      if (country) params.country = country
+      if (month) params.month = month
+      if (store) params.store = store
+      const res = await getCostBreakdown(params)
+      setCostData(res.data)
+    } catch (err) {
+      console.error('获取费用拆分数据失败', err)
+    }
+  }, [country, store, year, month])
+
   // 加载数据
   useEffect(() => {
     setLoading(true)
-    Promise.all([fetchSummary(), fetchTrend(), fetchDistribution()]).finally(() => setLoading(false))
-  }, [fetchSummary, fetchTrend, fetchDistribution])
+    Promise.all([fetchSummary(), fetchTrend(), fetchDistribution(), fetchCostBreakdown()])
+      .finally(() => setLoading(false))
+  }, [fetchSummary, fetchTrend, fetchDistribution, fetchCostBreakdown])
 
   // 解析 summary 数据
   const summaryData = summary?.current || {}
@@ -137,23 +154,22 @@ export default function Dashboard() {
   const resizeChart = (chart) => {
     if (chart) {
       chart.resize()
-      // 双重保障：下一帧再 resize 一次（应对 Card 布局延迟）
       requestAnimationFrame(() => chart.resize())
     }
   }
 
-  // 初始化/更新折线图
+  // ============ 折线图（净利润 + 销售额 + 订单量） ============
   useEffect(() => {
     if (!chartRef.current) return
-
     if (!chartInstanceRef.current) {
       chartInstanceRef.current = echarts.init(chartRef.current)
     }
     const chart = chartInstanceRef.current
 
-    const labels = trendData.map((item) => item.label || item.month || item.period)
-    const profitData = trendData.map((item) => item.net_profit ?? item.profit_rmb ?? item.profit ?? 0)
-    const salesData = trendData.map((item) => item.sales ?? item.sales_rmb ?? 0)
+    const labels = trendData.map((item) => item.label)
+    const profitData = trendData.map((item) => item.net_profit ?? 0)
+    const salesData = trendData.map((item) => item.sales ?? 0)
+    const ordersData = trendData.map((item) => item.orders ?? 0)
 
     const option = {
       tooltip: {
@@ -162,71 +178,92 @@ export default function Dashboard() {
         formatter: function (params) {
           let html = `<strong>${params[0].axisValueLabel}</strong><br/>`
           params.forEach((p) => {
-            html += `${p.marker} ${p.seriesName}：¥${formatNumber(p.value)}<br/>`
+            const unit = p.seriesName === '订单量' ? '单' : '¥'
+            html += `${p.marker} ${p.seriesName}：${unit}${formatNumber(p.value)}<br/>`
           })
           return html
         },
       },
       legend: {
-        data: ['净利润', '销售额'],
+        data: ['净利润', '销售额', '订单量'],
         top: 4,
+        textStyle: { fontSize: 13 },
       },
-      grid: {
-        left: '3%',
-        right: '4%',
-        bottom: '3%',
-        top: 48,
-        containLabel: true,
-      },
+      grid: { left: '3%', right: '4%', bottom: '3%', top: 56, containLabel: true },
       xAxis: {
         type: 'category',
         data: labels,
-        axisLabel: {
-          rotate: labels.length > 12 ? 30 : 0,
-        },
+        axisLabel: { rotate: labels.length > 12 ? 30 : 0 },
       },
-      yAxis: {
-        type: 'value',
-        name: '金额 (RMB)',
-        axisLabel: {
-          formatter: (val) => {
-            if (Math.abs(val) >= 10000) return (val / 10000).toFixed(1) + '万'
-            return formatNumber(val)
+      yAxis: [
+        {
+          type: 'value',
+          name: '金额 (RMB)',
+          position: 'left',
+          axisLabel: {
+            formatter: (val) => {
+              if (Math.abs(val) >= 10000) return (val / 10000).toFixed(1) + '万'
+              return formatNumber(val)
+            },
           },
         },
-      },
+        {
+          type: 'value',
+          name: '订单量',
+          position: 'right',
+          splitLine: { show: false },
+          axisLabel: { formatter: (val) => val.toLocaleString() },
+        },
+      ],
       series: [
         {
           name: '净利润',
           type: 'line',
           data: profitData,
-          smooth: true,
+          smooth: 0.4,
           symbol: 'circle',
           symbolSize: 6,
           lineStyle: { width: 2.5 },
           itemStyle: { color: '#52c41a' },
           areaStyle: {
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: 'rgba(82,196,26,0.25)' },
+              { offset: 0, color: 'rgba(82,196,26,0.3)' },
               { offset: 1, color: 'rgba(82,196,26,0.02)' },
             ]),
           },
+          animationDuration: 1500,
+          animationEasing: 'cubicOut',
         },
         {
           name: '销售额',
           type: 'line',
           data: salesData,
-          smooth: true,
+          smooth: 0.4,
           symbol: 'circle',
           symbolSize: 6,
           lineStyle: { width: 2.5 },
           itemStyle: { color: '#1677ff' },
           areaStyle: {
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: 'rgba(22,119,255,0.25)' },
+              { offset: 0, color: 'rgba(22,119,255,0.3)' },
               { offset: 1, color: 'rgba(22,119,255,0.02)' },
             ]),
           },
+          animationDuration: 1800,
+          animationEasing: 'cubicOut',
+        },
+        {
+          name: '订单量',
+          type: 'line',
+          yAxisIndex: 1,
+          data: ordersData,
+          smooth: 0.4,
+          symbol: 'diamond',
+          symbolSize: 7,
+          lineStyle: { width: 2, type: 'dashed' },
+          itemStyle: { color: '#faad14' },
+          animationDuration: 2000,
+          animationEasing: 'cubicOut',
         },
       ],
     }
@@ -235,10 +272,153 @@ export default function Dashboard() {
     resizeChart(chart)
   }, [trendData])
 
-  // 初始化/更新饼图
+  // ============ 瀑布图（费用结构） ============
+  useEffect(() => {
+    if (!waterfallRef.current || !costData) return
+    if (!waterfallInstanceRef.current) {
+      waterfallInstanceRef.current = echarts.init(waterfallRef.current)
+    }
+    const chart = waterfallInstanceRef.current
+
+    const { sales, expenses, net_profit, adjustment, diff } = costData
+
+    // 构建瀑布图数据：销售额 → 各项费用 → 调整 → 净利润
+    const categories = ['销售额']
+    const baseData = [0]
+    const expenseData = [sales]
+
+    let running = sales
+    for (const e of expenses) {
+      categories.push(e.name)
+      baseData.push(running - e.value)
+      expenseData.push(e.value)
+      running -= e.value
+    }
+
+    // 调整项（如果有）
+    if (adjustment && Math.abs(adjustment) > 1) {
+      categories.push('调整')
+      if (adjustment > 0) {
+        baseData.push(running)
+        expenseData.push(adjustment)
+      } else {
+        baseData.push(running + adjustment)
+        expenseData.push(-adjustment)
+      }
+      running += adjustment
+    }
+
+    // 差额（四舍五入误差等，如果有显著值则显示）
+    if (diff && Math.abs(diff) > 100) {
+      categories.push('差额')
+      if (diff > 0) {
+        baseData.push(running)
+        expenseData.push(diff)
+      } else {
+        baseData.push(running + diff)
+        expenseData.push(-diff)
+      }
+      running += diff
+    }
+
+    // 净利润（直接用数据库值，保证与 KPI 卡片一致）
+    categories.push('净利润')
+    baseData.push(0)
+    expenseData.push(Math.max(net_profit, 0))
+
+    const option = {
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: function (params) {
+          const real = params.find(p => p.seriesName === '费用')
+          if (!real) return ''
+          return `<strong>${real.axisValueLabel}</strong><br/>¥${formatNumber(real.value)}`
+        },
+      },
+      grid: { left: '3%', right: '4%', bottom: '3%', top: 40, containLabel: true },
+      xAxis: {
+        type: 'category',
+        data: categories,
+        axisLabel: { rotate: 30, fontSize: 11 },
+      },
+      yAxis: {
+        type: 'value',
+        name: '金额 (RMB)',
+        axisLabel: {
+          formatter: val => {
+            if (Math.abs(val) >= 10000) return (val / 10000).toFixed(1) + '万'
+            return val.toLocaleString()
+          },
+        },
+      },
+      series: [
+        {
+          name: '底座',
+          type: 'bar',
+          stack: 'waterfall',
+          itemStyle: { borderColor: 'transparent', color: 'transparent' },
+          emphasis: { itemStyle: { borderColor: 'transparent', color: 'transparent' } },
+          data: baseData,
+        },
+        {
+          name: '费用',
+          type: 'bar',
+          stack: 'waterfall',
+          barMaxWidth: 50,
+          data: expenseData.map((val, i) => ({
+            value: val,
+            itemStyle: {
+              color: i === 0
+                // 销售额：蓝色
+                ? new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                    { offset: 0, color: '#1677ff' },
+                    { offset: 1, color: '#4096ff' },
+                  ])
+                : i === categories.length - 1
+                  // 净利润：绿色/红色
+                  ? (net_profit >= 0
+                      ? new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                          { offset: 0, color: '#52c41a' },
+                          { offset: 1, color: '#95de64' },
+                        ])
+                      : new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                          { offset: 0, color: '#cf1322' },
+                          { offset: 1, color: '#ff4d4f' },
+                        ]))
+                  // 费用项：橙色
+                  : new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                      { offset: 0, color: '#ff7a45' },
+                      { offset: 1, color: '#ffa940' },
+                    ]),
+              borderRadius: [4, 4, 0, 0],
+            },
+          })),
+          label: {
+            show: true,
+            position: 'top',
+            formatter: function (params) {
+              if (params.value <= 0) return ''
+              if (params.value >= 10000) return (params.value / 10000).toFixed(1) + '万'
+              return params.value.toLocaleString()
+            },
+            fontSize: 11,
+            color: '#666',
+          },
+          animationDelay: (idx) => idx * 150,
+          animationDuration: 800,
+          animationEasing: 'elasticOut',
+        },
+      ],
+    }
+
+    chart.setOption(option, true)
+    resizeChart(chart)
+  }, [costData])
+
+  // ============ 饼图 ============
   useEffect(() => {
     if (!pieChartRef.current || distributionData.length === 0) return
-
     if (!pieChartInstanceRef.current) {
       pieChartInstanceRef.current = echarts.init(pieChartRef.current)
     }
@@ -277,9 +457,13 @@ export default function Dashboard() {
         label: { show: false },
         emphasis: {
           label: { show: true, fontSize: 14, fontWeight: 'bold' },
+          scaleSize: 10,
         },
         labelLine: { show: false },
         data: pieData,
+        animationType: 'scale',
+        animationEasing: 'elasticOut',
+        animationDelay: (idx) => idx * 80,
       }],
     }
 
@@ -287,10 +471,9 @@ export default function Dashboard() {
     resizeChart(chart)
   }, [distributionData, store, country])
 
-  // 初始化/更新柱状图
+  // ============ 柱状图 ============
   useEffect(() => {
     if (!barChartRef.current || distributionData.length === 0) return
-
     if (!barChartInstanceRef.current) {
       barChartInstanceRef.current = echarts.init(barChartRef.current)
     }
@@ -336,17 +519,38 @@ export default function Dashboard() {
           name: '销售额',
           type: 'bar',
           data: salesData,
-          itemStyle: { color: '#1677ff' },
+          itemStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: '#1677ff' },
+              { offset: 1, color: '#4096ff' },
+            ]),
+            borderRadius: [4, 4, 0, 0],
+          },
           barMaxWidth: 40,
+          animationDelay: (idx) => idx * 100,
+          animationDuration: 600,
+          animationEasing: 'cubicOut',
         },
         {
           name: '净利润',
           type: 'bar',
           data: profitData,
           itemStyle: {
-            color: params => params.value >= 0 ? '#fa8c16' : '#cf1322',
+            color: params => params.value >= 0
+              ? new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                  { offset: 0, color: '#fa8c16' },
+                  { offset: 1, color: '#ffa940' },
+                ])
+              : new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                  { offset: 0, color: '#cf1322' },
+                  { offset: 1, color: '#ff4d4f' },
+                ]),
+            borderRadius: [4, 4, 0, 0],
           },
           barMaxWidth: 40,
+          animationDelay: (idx) => idx * 100 + 50,
+          animationDuration: 600,
+          animationEasing: 'cubicOut',
         },
       ],
     }
@@ -361,6 +565,7 @@ export default function Dashboard() {
       chartInstanceRef.current?.resize()
       pieChartInstanceRef.current?.resize()
       barChartInstanceRef.current?.resize()
+      waterfallInstanceRef.current?.resize()
     }
     window.addEventListener('resize', handleResize)
     return () => {
@@ -371,12 +576,14 @@ export default function Dashboard() {
       pieChartInstanceRef.current = null
       barChartInstanceRef.current?.dispose()
       barChartInstanceRef.current = null
+      waterfallInstanceRef.current?.dispose()
+      waterfallInstanceRef.current = null
     }
   }, [])
 
   return (
-    <div>
-      {/* 筛选栏: 店铺 > 国家 > 年月 */}
+    <Spin spinning={loading}>
+      {/* 筛选栏 */}
       <div style={{ marginBottom: 24, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         <span style={{ fontWeight: 600, fontSize: 13, color: '#666' }}>店铺</span>
         <Select style={{ width: 170 }} value={store} onChange={setStore} options={storeOptions}
@@ -388,8 +595,8 @@ export default function Dashboard() {
         <Select style={{ width: 90 }} value={month} onChange={setMonth} options={MONTH_OPTIONS} />
       </div>
 
-      {/* 统计卡片 */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+      {/* 统计卡片 — 第一行：核心指标 */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={24} sm={12} lg={6}>
           <StatCard
             title="净利润 (RMB)"
@@ -431,23 +638,78 @@ export default function Dashboard() {
         </Col>
       </Row>
 
-      {/* 饼图和柱状图 */}
-      <Row gutter={16}>
-        <Col xs={24} lg={12}>
-          <Card title="产品销售占比" style={{ marginBottom: 16 }}>
-            <div ref={pieChartRef} style={{ width: '100%', height: 400 }} />
-          </Card>
+      {/* 统计卡片 — 第二行：广告指标 */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={12} sm={8} lg={4}>
+          <StatCard
+            title="ACOS"
+            value={summaryData.acos ?? 0}
+            suffix="%"
+            change={changeData.acos}
+            icon={<FireOutlined />}
+            color="#eb2f96"
+            changeLabel="环比"
+            small
+          />
         </Col>
-        <Col xs={24} lg={12}>
-          <Card title="产品销售对比 (Top 10)" style={{ marginBottom: 16 }}>
-            <div ref={barChartRef} style={{ width: '100%', height: 400 }} />
-          </Card>
+        <Col xs={12} sm={8} lg={4}>
+          <StatCard
+            title="ROAS"
+            value={summaryData.roas ?? 0}
+            suffix="x"
+            change={changeData.roas}
+            icon={<AimOutlined />}
+            color="#13c2c2"
+            changeLabel="环比"
+            small
+          />
+        </Col>
+        <Col xs={12} sm={8} lg={4}>
+          <StatCard
+            title="广告花费"
+            value={summaryData.total_ad_spend_rmb ?? 0}
+            prefix="¥"
+            icon={<DollarOutlined />}
+            color="#f5222d"
+            small
+          />
+        </Col>
+        <Col xs={12} sm={8} lg={4}>
+          <StatCard
+            title="点击率 CTR"
+            value={summaryData.ctr ?? 0}
+            suffix="%"
+            icon={<PercentageOutlined />}
+            color="#722ed1"
+            small
+          />
+        </Col>
+        <Col xs={12} sm={8} lg={4}>
+          <StatCard
+            title="CPC"
+            value={summaryData.cpc ?? 0}
+            prefix="$"
+            icon={<DollarOutlined />}
+            color="#fa541c"
+            small
+          />
+        </Col>
+        <Col xs={12} sm={8} lg={4}>
+          <StatCard
+            title="转化率 CVR"
+            value={summaryData.cvr ?? 0}
+            suffix="%"
+            icon={<ShoppingCartOutlined />}
+            color="#52c41a"
+            small
+          />
         </Col>
       </Row>
 
       {/* 趋势图 */}
       <Card
         title="月度趋势"
+        style={{ marginBottom: 16 }}
         extra={
           <Segmented
             options={[
@@ -459,11 +721,27 @@ export default function Dashboard() {
           />
         }
       >
-        <div
-          ref={chartRef}
-          style={{ width: '100%', height: 400 }}
-        />
+        <div ref={chartRef} style={{ width: '100%', height: 400 }} />
       </Card>
-    </div>
+
+      {/* 费用瀑布图 + 产品饼图 */}
+      <Row gutter={16} style={{ marginBottom: 16 }}>
+        <Col xs={24} lg={12}>
+          <Card title="费用结构瀑布图" style={{ height: '100%' }}>
+            <div ref={waterfallRef} style={{ width: '100%', height: 400 }} />
+          </Card>
+        </Col>
+        <Col xs={24} lg={12}>
+          <Card title="产品销售占比" style={{ height: '100%' }}>
+            <div ref={pieChartRef} style={{ width: '100%', height: 400 }} />
+          </Card>
+        </Col>
+      </Row>
+
+      {/* 产品柱状图 */}
+      <Card title="产品销售对比 (Top 10)">
+        <div ref={barChartRef} style={{ width: '100%', height: 400 }} />
+      </Card>
+    </Spin>
   )
 }

@@ -9,6 +9,7 @@ const api = axios.create({
 export const getDashboardSummary = (params) => api.get('/dashboard/summary', { params })
 export const getDashboardTrend = (params) => api.get('/dashboard/trend', { params })
 export const getProductDistribution = (params) => api.get('/dashboard/product-distribution', { params })
+export const getCostBreakdown = (params) => api.get('/dashboard/cost-breakdown', { params })
 
 // 广告
 export const getAdvertisingSummary = (params) => api.get('/advertising/summary', { params })
