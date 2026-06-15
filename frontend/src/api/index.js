@@ -13,6 +13,7 @@ export const getCostBreakdown = (params) => api.get('/dashboard/cost-breakdown',
 export const getTopReturns = (params) => api.get('/dashboard/top-returns', { params })
 export const getStoreComparison = (params) => api.get('/dashboard/store-comparison', { params })
 export const getCountryComparison = (params) => api.get('/dashboard/country-comparison', { params })
+export const getTransferSummary = (params) => api.get('/dashboard/transfer-summary', { params })
 
 // 广告
 export const getAdvertisingSummary = (params) => api.get('/advertising/summary', { params })
@@ -72,5 +73,9 @@ export const recalculateProfit = (country) => api.post('/import/recalculate', nu
 // 查询
 export const getMonthlySummary = (params) => api.get('/query/monthly-summary', { params })
 export const getCountrySummary = (params) => api.get('/query/country-summary', { params })
+
+// 导出
+export const exportMonthlySummary = (params) => api.get('/export/monthly-summary', { params, responseType: 'blob' })
+export const exportCountrySummary = (params) => api.get('/export/country-summary', { params, responseType: 'blob' })
 
 export default api

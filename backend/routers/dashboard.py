@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import func, extract, String
+from sqlalchemy import func, extract, String, and_
 from database import get_db
-from models import MonthlySummary, DimCountry, DimTime, DimProduct, DimStore, RawTransaction
+from models import MonthlySummary, DimCountry, DimTime, DimProduct, DimStore, RawTransaction, DimExchangeRate
 
 router = APIRouter()
 
@@ -547,4 +547,117 @@ def get_top_returns(
         return {"data": data}
 
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/transfer-summary")
+def get_transfer_summary(
+    country: str = Query(None, description="国家代码"),
+    store: str = Query(None, description="店铺代码"),
+    year: int = Query(None, description="年份"),
+    month: int = Query(None, description="月份"),
+    db: Session = Depends(get_db),
+):
+    """查询Transfer类交易（各语言变体），按汇率换算RMB"""
+    try:
+        # 已知的 Transfer 类型（各语言变体）
+        transfer_types = (
+            "Transfer", "Übertrag", "Transferir", "Transfert",
+            "Trasferimento", "Trasferir", "Overboeking",
+            "Transférer", "Överföring",
+        )
+
+        q = db.query(
+            RawTransaction.country_id,
+            RawTransaction.store_id,
+            RawTransaction.transaction_type,
+            extract('year', RawTransaction.transaction_date).label('txn_year'),
+            extract('month', RawTransaction.transaction_date).label('txn_month'),
+            func.sum(RawTransaction.total).label('total_usd'),
+            func.count(RawTransaction.id).label('cnt'),
+        ).filter(
+            RawTransaction.transaction_type.in_(transfer_types)
+        )
+
+        if country:
+            q = q.join(DimCountry, RawTransaction.country_id == DimCountry.id).filter(
+                DimCountry.code == country.upper()
+            )
+        if store:
+            q = q.join(DimStore, RawTransaction.store_id == DimStore.id).filter(
+                DimStore.code == store
+            )
+        if year:
+            q = q.filter(extract('year', RawTransaction.transaction_date) == year)
+        if month:
+            q = q.filter(extract('month', RawTransaction.transaction_date) == month)
+
+        q = q.group_by(
+            RawTransaction.country_id,
+            RawTransaction.store_id,
+            RawTransaction.transaction_type,
+            'txn_year', 'txn_month'
+        )
+        rows = q.all()
+
+        # 预加载汇率表
+        rate_map = {}
+        for r in db.query(DimExchangeRate).all():
+            key = (r.country_id, r.store_id, r.year_month)
+            rate_map[key] = float(r.rate)
+
+        country_map = {c.id: c.code for c in db.query(DimCountry).all()}
+
+        total_rmb = 0.0
+        total_usd = 0.0
+        by_type = {}
+        by_country = {}
+
+        for row in rows:
+            cid = row.country_id
+            sid = row.store_id
+            txn_type = row.transaction_type
+            y = int(row.txn_year)
+            m = int(row.txn_month)
+            usd = float(row.total_usd or 0)
+            cnt = int(row.cnt or 0)
+            ym = f"{y}-{m:02d}"
+
+            er = rate_map.get((cid, sid, ym)) or rate_map.get((cid, None, ym)) or 6.8
+            rmb = usd * er
+            total_usd += abs(usd)
+            total_rmb += abs(rmb)
+
+            cc = country_map.get(cid, '??')
+            if txn_type not in by_type:
+                by_type[txn_type] = {"usd": 0, "rmb": 0, "count": 0}
+            by_type[txn_type]["usd"] += usd
+            by_type[txn_type]["rmb"] += rmb
+            by_type[txn_type]["count"] += cnt
+
+            if cc not in by_country:
+                by_country[cc] = {"usd": 0, "rmb": 0, "count": 0}
+            by_country[cc]["usd"] += usd
+            by_country[cc]["rmb"] += rmb
+            by_country[cc]["count"] += cnt
+
+        type_list = [
+            {"type": k, "usd": round(v["usd"], 2), "rmb": round(v["rmb"], 2), "count": v["count"]}
+            for k, v in sorted(by_type.items(), key=lambda x: x[1]["rmb"])
+        ]
+        country_list = [
+            {"country": k, "usd": round(v["usd"], 2), "rmb": round(v["rmb"], 2), "count": v["count"]}
+            for k, v in sorted(by_country.items(), key=lambda x: x[1]["rmb"])
+        ]
+
+        return {
+            "total_rmb": round(total_rmb, 2),
+            "total_usd": round(total_usd, 2),
+            "by_type": type_list,
+            "by_country": country_list,
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

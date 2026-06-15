@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Select, Tabs, Upload, Card, Alert, Spin, message, Typography, Space, Tag, Button, Collapse } from 'antd'
+import { Select, Tabs, Upload, Card, Alert, Spin, message, Typography, Space, Tag, Button, Collapse, Modal } from 'antd'
 import { InboxOutlined, CheckCircleOutlined, CloseCircleOutlined, WarningOutlined } from '@ant-design/icons'
 import { getImportSupported, uploadFile, uploadWorkbook, getStores, getCountries } from '../api'
 import axios from 'axios'
@@ -91,8 +91,8 @@ export default function DataImport() {
     return true
   }
 
-  // 自定义上传
-  const handleUpload = async ({ file, onSuccess, onError }, type) => {
+  // 执行实际导入
+  const doUpload = async ({ file, onSuccess, onError }, type) => {
     setUploading((prev) => ({ ...prev, [type]: true }))
     try {
       const res = await uploadFile(type, file, country, store, importYear, importMonth)
@@ -124,6 +124,35 @@ export default function DataImport() {
     } finally {
       setUploading((prev) => ({ ...prev, [type]: false }))
     }
+  }
+
+  // 自定义上传（带二次确认）
+  const handleUpload = (options, type) => {
+    const { file } = options
+    const storeLabel = storeOptions.find(s => s.value === store)?.label || store || '未选择'
+    const tabLabel = IMPORT_TABS.find(t => t.key === type)?.label || type
+
+    Modal.confirm({
+      title: '确认导入数据',
+      icon: <WarningOutlined />,
+      content: (
+        <div style={{ lineHeight: 2 }}>
+          <div><strong>文件：</strong>{file.name}</div>
+          <div><strong>类型：</strong>{tabLabel}</div>
+          <div><strong>店铺：</strong>{storeLabel}</div>
+          <div><strong>月份：</strong>{importYear}年{importMonth}月</div>
+          <div style={{ color: '#cf1322', marginTop: 8 }}>
+            ⚠️ 导入会覆盖该店铺该月份的同类数据，请确认信息无误！
+          </div>
+        </div>
+      ),
+      okText: '确认导入',
+      cancelText: '取消',
+      onOk: () => doUpload(options, type),
+      onCancel: () => {
+        options.onError(new Error('用户取消'))
+      },
+    })
   }
 
   // 获取当前 tab 的支持字段
@@ -241,8 +270,8 @@ export default function DataImport() {
     )
   }
 
-  // 工作簿上传处理
-  const handleWorkbookUpload = async ({ file, onSuccess, onError }) => {
+  // 执行实际工作簿导入
+  const doWorkbookUpload = async ({ file, onSuccess, onError }) => {
     setWbUploading(true)
     setWbResult(null)
     try {
@@ -258,6 +287,34 @@ export default function DataImport() {
     } finally {
       setWbUploading(false)
     }
+  }
+
+  // 工作簿上传处理（带二次确认）
+  const handleWorkbookUpload = (options) => {
+    const { file } = options
+    const storeLabel = storeOptions.find(s => s.value === store)?.label || store || '未选择'
+
+    Modal.confirm({
+      title: '确认导入工作簿',
+      icon: <WarningOutlined />,
+      content: (
+        <div style={{ lineHeight: 2 }}>
+          <div><strong>文件：</strong>{file.name}</div>
+          <div><strong>类型：</strong>一键导入工作簿（多Sheet）</div>
+          <div><strong>店铺：</strong>{storeLabel}</div>
+          <div><strong>月份：</strong>{importYear}年{importMonth}月</div>
+          <div style={{ color: '#cf1322', marginTop: 8 }}>
+            ⚠️ 系统将自动识别所有Sheet并导入，会覆盖对应数据，请确认信息无误！
+          </div>
+        </div>
+      ),
+      okText: '确认导入',
+      cancelText: '取消',
+      onOk: () => doWorkbookUpload(options),
+      onCancel: () => {
+        options.onError(new Error('用户取消'))
+      },
+    })
   }
 
   // 渲染工作簿导入结果

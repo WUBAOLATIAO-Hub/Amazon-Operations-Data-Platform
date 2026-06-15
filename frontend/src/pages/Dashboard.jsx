@@ -11,7 +11,7 @@ import {
 } from '@ant-design/icons'
 import * as echarts from 'echarts'
 import StatCard from '../components/StatCard'
-import { getDashboardSummary, getDashboardTrend, getProductDistribution, getCostBreakdown, getTopReturns, getStoreComparison, getCountryComparison, getStores, getCountries } from '../api'
+import { getDashboardSummary, getDashboardTrend, getProductDistribution, getCostBreakdown, getTopReturns, getStoreComparison, getCountryComparison, getTransferSummary, getStores, getCountries } from '../api'
 
 // 年份选项（最近5年）
 const currentYear = new Date().getFullYear()
@@ -59,6 +59,7 @@ export default function Dashboard() {
   const [returnsData, setReturnsData] = useState([])
   const [storeCompareData, setStoreCompareData] = useState([])
   const [countryCompareData, setCountryCompareData] = useState([])
+  const [transferData, setTransferData] = useState(null)
   const [trendMode, setTrendMode] = useState('monthly')
   const [costMode, setCostMode] = useState('waterfall')
 
@@ -196,10 +197,25 @@ export default function Dashboard() {
     }
   }, [store, year, month])
 
+  // 获取其他交易汇总（Transfer、FBA Inventory Fee、Service Fee等）
+  const fetchTransfer = useCallback(async () => {
+    try {
+      const params = {}
+      if (country) params.country = country
+      if (store) params.store = store
+      if (year) params.year = year
+      if (month) params.month = month
+      const res = await getTransferSummary(params)
+      setTransferData(res.data)
+    } catch (err) {
+      console.error('获取交易汇总失败', err)
+    }
+  }, [country, store, year, month])
+
   // 加载数据
   useEffect(() => {
     setLoading(true)
-    Promise.all([fetchSummary(), fetchTrend(), fetchDistribution(), fetchCostBreakdown(), fetchReturns(), fetchStoreCompare(), fetchCountryCompare()])
+    Promise.all([fetchSummary(), fetchTrend(), fetchDistribution(), fetchCostBreakdown(), fetchReturns(), fetchStoreCompare(), fetchCountryCompare(), fetchTransfer()])
       .finally(() => setLoading(false))
   }, [fetchSummary, fetchTrend, fetchDistribution, fetchCostBreakdown])
 
@@ -1012,6 +1028,27 @@ export default function Dashboard() {
         <Select style={{ width: 110 }} value={year} onChange={setYear} options={YEAR_OPTIONS} />
         <Select style={{ width: 90 }} value={month} onChange={setMonth} options={MONTH_OPTIONS} />
       </div>
+
+      {/* 结算转账（Transfer 各语言变体）— 换算RMB */}
+      {transferData && transferData.total_rmb !== 0 && (
+        <Card
+          size="small"
+          style={{ marginBottom: 16, background: 'linear-gradient(135deg, #fff7e6 0%, #fff1d4 100%)', border: '1px solid #ffe4b5' }}
+          title={
+            <span style={{ fontSize: 14 }}>
+              <SwapOutlined style={{ marginRight: 8, color: '#fa8c16' }} />
+              结算转账（Amazon打款至银行卡）
+            </span>
+          }
+        >
+          <div style={{ textAlign: 'center', padding: '12px 0 4px' }}>
+            <div style={{ color: '#8c8c8c', fontSize: 14, marginBottom: 8 }}>合计到卡收入 (RMB)</div>
+            <div style={{ fontSize: 48, fontWeight: 700, color: '#3f8600', letterSpacing: 2 }}>
+              ¥{formatNumber(Math.abs(transferData.total_rmb))}
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* 统计卡片 — 第一行：核心指标 */}
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>

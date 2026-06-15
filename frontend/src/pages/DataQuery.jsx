@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Select, Input, Button, Table, Card, message, Space, Statistic, Row, Col, Segmented, Tag } from 'antd'
-import { SearchOutlined, ReloadOutlined, TableOutlined, AppstoreOutlined } from '@ant-design/icons'
-import { getMonthlySummary, getCountrySummary, getStores, getCountries } from '../api'
+import { SearchOutlined, ReloadOutlined, TableOutlined, AppstoreOutlined, DownloadOutlined } from '@ant-design/icons'
+import { getMonthlySummary, getCountrySummary, getStores, getCountries, exportMonthlySummary, exportCountrySummary } from '../api'
 
 const YEAR_OPTIONS = [
   { value: 0, label: '全部' },
@@ -133,6 +133,63 @@ export default function DataQuery() {
     setCountry(countryCode)
   }
 
+  // 解析Content-Disposition中的文件名
+  const parseFilename = (disposition) => {
+    if (!disposition) return null
+    // filename*=UTF-8''encoded
+    const utf8Match = disposition.match(/filename\*=UTF-8''(.+?)$/i)
+    if (utf8Match) return decodeURIComponent(utf8Match[1])
+    // filename="xxx" 或 filename=xxx
+    const match = disposition.match(/filename="?(.+?)"?$/)
+    return match ? match[1] : null
+  }
+
+  // 导出下载辅助
+  const downloadBlob = (blob, filename) => {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  // 导出产品明细
+  const handleExportProduct = async () => {
+    const params = {}
+    if (country) params.country = country
+    if (store) params.store = store
+    if (year) params.year = year
+    if (month) params.month = month
+    if (keyword.trim()) params.keyword = keyword.trim()
+    try {
+      message.loading({ content: '正在导出...', key: 'export' })
+      const res = await exportMonthlySummary(params)
+      const filename = parseFilename(res.headers['content-disposition']) || '产品明细.xlsx'
+      downloadBlob(res.data, filename)
+      message.success({ content: '导出完成', key: 'export' })
+    } catch (err) {
+      message.error({ content: '导出失败：' + (err.response?.data?.detail || err.message), key: 'export' })
+    }
+  }
+
+  // 导出国家汇总
+  const handleExportCountry = async () => {
+    if (!store || country) return
+    const params = { store }
+    if (year) params.year = year
+    if (month) params.month = month
+    try {
+      message.loading({ content: '正在导出...', key: 'export' })
+      const res = await exportCountrySummary(params)
+      const filename = parseFilename(res.headers['content-disposition']) || '国家汇总.xlsx'
+      downloadBlob(res.data, filename)
+      message.success({ content: '导出完成', key: 'export' })
+    } catch (err) {
+      message.error({ content: '导出失败：' + (err.response?.data?.detail || err.message), key: 'export' })
+    }
+  }
+
   // 国家汇总表列
   const countryColumns = [
     { title: '国家', dataIndex: 'country_name', width: 100, render: (v, r) => <Tag>{r.country_code}</Tag> },
@@ -196,6 +253,10 @@ export default function DataQuery() {
           <Input placeholder="ASIN或产品名称" allowClear style={{ width: 200 }} value={keyword} onChange={e => setKeyword(e.target.value)} onPressEnter={handleSearch} />
           <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>查询</Button>
           <Button icon={<ReloadOutlined />} onClick={handleReset}>重置</Button>
+          <Button icon={<DownloadOutlined />} onClick={handleExportProduct} disabled={!store}>导出明细</Button>
+          {!country && countryData.length > 0 && (
+            <Button icon={<DownloadOutlined />} onClick={handleExportCountry}>导出国家汇总</Button>
+          )}
         </div>
       </Card>
 
