@@ -876,6 +876,7 @@ async def import_transaction(
                 - Decimal(str(summary.storage_fee_usd or 0)) * exchange_rate
                 - Decimal(str(summary.returns_fee_usd or 0)) * exchange_rate
                 - Decimal(str(summary.inbound_fee_usd or 0)) * exchange_rate
+                - Decimal(str(summary.removal_fee_usd or 0)) * exchange_rate
             ).quantize(Decimal("0.01"))
 
             summary.net_profit_rmb = net
@@ -928,6 +929,7 @@ async def import_transaction(
                 - Decimal(str(summary.storage_fee_usd or 0)) * er
                 - Decimal(str(summary.returns_fee_usd or 0)) * er
                 - Decimal(str(summary.inbound_fee_usd or 0)) * er
+                - Decimal(str(summary.removal_fee_usd or 0)) * er
             ).quantize(Decimal("0.01"))
             summary.net_profit_rmb = net
             if summary.product_sales_rmb and summary.product_sales_rmb != 0:
@@ -1278,6 +1280,7 @@ async def import_advertising(
                         order_count=0, order_qty=0,
                         product_sales_usd=Decimal("0"), commission_usd=Decimal("0"), fba_fee_usd=Decimal("0"),
                         ad_spend_usd=Decimal("0"), storage_fee_usd=Decimal("0"), returns_fee_usd=Decimal("0"), inbound_fee_usd=Decimal("0"),
+                        removal_fee_usd=Decimal("0"),
                     )
                     db.add(summary)
                 target_summaries = [summary]
@@ -1316,6 +1319,7 @@ async def import_advertising(
                     - Decimal(str(summary.storage_fee_usd or 0)) * exchange_rate
                     - Decimal(str(summary.returns_fee_usd or 0)) * exchange_rate
                     - Decimal(str(summary.inbound_fee_usd or 0)) * exchange_rate
+                    - Decimal(str(summary.removal_fee_usd or 0)) * exchange_rate
                 ).quantize(Decimal("0.01"))
 
                 summary.net_profit_rmb = net
@@ -1481,6 +1485,7 @@ async def import_storage(
                             order_count=0, order_qty=0,
                             product_sales_usd=Decimal("0"), commission_usd=Decimal("0"), fba_fee_usd=Decimal("0"),
                             ad_spend_usd=Decimal("0"), storage_fee_usd=Decimal("0"), returns_fee_usd=Decimal("0"), inbound_fee_usd=Decimal("0"),
+                            removal_fee_usd=Decimal("0"),
                         )
                         db.add(summary)
                     target_summaries = [summary]
@@ -1515,6 +1520,7 @@ async def import_storage(
                     - Decimal(str(summary.storage_fee_usd or 0)) * exchange_rate
                     - Decimal(str(summary.returns_fee_usd or 0)) * exchange_rate
                     - Decimal(str(summary.inbound_fee_usd or 0)) * exchange_rate
+                    - Decimal(str(summary.removal_fee_usd or 0)) * exchange_rate
                 ).quantize(Decimal("0.01"))
 
                 summary.net_profit_rmb = net
@@ -1673,6 +1679,7 @@ async def import_returns(
                     - Decimal(str(summary.storage_fee_usd or 0)) * exchange_rate
                     - Decimal(str(summary.returns_fee_usd or 0)) * exchange_rate
                     - Decimal(str(summary.inbound_fee_usd or 0)) * exchange_rate
+                    - Decimal(str(summary.removal_fee_usd or 0)) * exchange_rate
                 ).quantize(Decimal("0.01"))
 
                 summary.net_profit_rmb = net
@@ -1841,6 +1848,7 @@ async def import_inbound(
                     - Decimal(str(summary.storage_fee_usd or 0)) * exchange_rate
                     - Decimal(str(summary.returns_fee_usd or 0)) * exchange_rate
                     - Decimal(str(summary.inbound_fee_usd or 0)) * exchange_rate
+                    - Decimal(str(summary.removal_fee_usd or 0)) * exchange_rate
                 ).quantize(Decimal("0.01"))
 
                 summary.net_profit_rmb = net
@@ -1967,6 +1975,9 @@ async def import_workbook(
             # 汇率表：含"国家"和"汇率"列
             if "汇率" in header and ("国家" in header or "country" in header):
                 return "exchange_rate", header, data_rows
+            # 移除费：含 request-date 和 removal-fee
+            if "request-date" in header and "removal-fee" in header:
+                return "removal_fee", header, data_rows
             return None, header, data_rows
 
         # 解析所有 sheet
@@ -1986,7 +1997,7 @@ async def import_workbook(
 
         # ===== 自动检测国家（每个sheet独立检测，支持多国家工作簿）=====
         # 多国家 sheet 类型：从数据行的 country_code/country 列读取国家，不按 sheet 分配
-        _multi_country_types = {"storage", "long_term_storage", "returns", "inbound", "exchange_rate"}
+        _multi_country_types = {"storage", "long_term_storage", "returns", "inbound", "exchange_rate", "removal_fee"}
         _sheet_country_kw = {
             '英国': 'UK', 'UK': 'UK',
             '德国': 'DE', 'DE': 'DE',
@@ -2143,6 +2154,8 @@ async def import_workbook(
                     result = _process_fee_sheet(db, co, header, rows, "storage", store_id=store_obj.id, import_year=import_year, import_month=import_month)
                 elif stype == "long_term_storage":
                     result = _process_fee_sheet(db, co, header, rows, "long_term_storage", store_id=store_obj.id, import_year=import_year, import_month=import_month)
+                elif stype == "removal_fee":
+                    result = _process_removal_fee_sheet(db, co, header, rows, store_id=store_obj.id, import_year=import_year, import_month=import_month)
                 results[sheet_name] = {"status": "success", "type": stype, "country": cc or "multi", **result}
             except Exception as e:
                 db.rollback()  # 恢复 session，防止后续导入全部失败
@@ -2608,6 +2621,7 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
             - Decimal(str(summary.storage_fee_usd or 0)) * er
             - Decimal(str(summary.returns_fee_usd or 0)) * er
             - Decimal(str(summary.inbound_fee_usd or 0)) * er
+            - Decimal(str(summary.removal_fee_usd or 0)) * er
         ).quantize(Decimal("0.01"))
         summary.net_profit_rmb = net
         if summary.product_sales_rmb and summary.product_sales_rmb != 0:
@@ -2824,6 +2838,7 @@ def _process_advertising_sheet(db, country_obj, header, rows, time_id=None, stor
                     store_id=store_id, order_count=0, order_qty=0,
                     product_sales_usd=Decimal("0"), commission_usd=Decimal("0"), fba_fee_usd=Decimal("0"),
                     ad_spend_usd=Decimal("0"), storage_fee_usd=Decimal("0"), returns_fee_usd=Decimal("0"), inbound_fee_usd=Decimal("0"),
+                    removal_fee_usd=Decimal("0"),
                 )
                 db.add(summary)
                 db.flush()
@@ -3090,6 +3105,7 @@ def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None, i
                     store_id=store_id, order_count=0, order_qty=0,
                     product_sales_usd=Decimal("0"), commission_usd=Decimal("0"), fba_fee_usd=Decimal("0"),
                     ad_spend_usd=Decimal("0"), storage_fee_usd=Decimal("0"), returns_fee_usd=Decimal("0"), inbound_fee_usd=Decimal("0"),
+                    removal_fee_usd=Decimal("0"),
                 )
                 db.add(summary)
                 db.flush()
@@ -3165,9 +3181,156 @@ def _ensure_all_products_have_summary(db, country_obj, store_id=None, import_yea
             storage_fee_usd=Decimal("0"),
             returns_fee_usd=Decimal("0"),
             inbound_fee_usd=Decimal("0"),
+            removal_fee_usd=Decimal("0"),
         )
         db.add(summary)
     db.flush()
+
+
+def _process_removal_fee_sheet(db, country_obj, header, rows, store_id=None, import_year=None, import_month=None):
+    """处理移除费 sheet：写入 raw_removal_fee，按 SKU 匹配产品，汇总到 monthly_summary"""
+    from models import RawRemovalFee, DimProduct, DimTime, MonthlySummary
+
+    # 查找列索引
+    col_request_date = _find_col(header, "request-date", "request_date")
+    col_order_id = _find_col(header, "order-id", "order_id")
+    col_order_source = _find_col(header, "order-source", "order_source")
+    col_order_type = _find_col(header, "order-type", "order_type")
+    col_service_speed = _find_col(header, "service-speed", "service_speed")
+    col_order_status = _find_col(header, "order-status", "order_status")
+    col_last_updated = _find_col(header, "last-updated-date", "last_updated_date")
+    col_sku = _find_col(header, "sku")
+    col_fnsku = _find_col(header, "fnsku")
+    col_disposition = _find_col(header, "disposition")
+    col_requested_qty = _find_col(header, "requested-quantity", "requested_quantity")
+    col_cancelled_qty = _find_col(header, "cancelled-quantity", "cancelled_quantity")
+    col_disposed_qty = _find_col(header, "disposed-quantity", "disposed_quantity")
+    col_shipped_qty = _find_col(header, "shipped-quantity", "shipped_quantity")
+    col_in_process_qty = _find_col(header, "in-process-quantity", "in_process_quantity")
+    col_removal_fee = _find_col(header, "removal-fee", "removal_fee")
+    col_currency = _find_col(header, "currency")
+    col_country = _find_col(header, "国家", "country")
+
+    if col_sku is None or col_removal_fee is None:
+        return {"csv_rows": 0, "summary_updated": 0, "error": "缺少必要列 (sku/removal-fee)"}
+
+    # 导入月份
+    _import_ym = f"{import_year}-{import_month:02d}" if import_year and import_month else None
+
+    # 国家缓存
+    _country_cache = {}
+    def _get_row_country(row):
+        if col_country is not None and row[col_country]:
+            cc = str(row[col_country]).strip().upper()
+            if cc in _country_cache:
+                return _country_cache[cc]
+            cc_map = {'US': 'US', 'USA': 'US', 'CA': 'CA', 'CAN': 'CA', 'MX': 'MX', 'MEX': 'MX',
+                      'UK': 'UK', 'GB': 'UK', 'DE': 'DE', 'DEU': 'DE', 'AU': 'AU', 'AUS': 'AU',
+                      'FR': 'FR', 'FRA': 'FR', 'ES': 'ES', 'ESP': 'ES', 'IT': 'IT', 'ITA': 'IT',
+                      'NL': 'NL', 'NLD': 'NL', 'BE': 'BE', 'BEL': 'BE', 'IE': 'IE', 'IRL': 'IE',
+                      'SE': 'SE', 'SWE': 'SE', 'AE': 'AE', 'ARE': 'AE', 'SA': 'SA', 'SAU': 'SA'}
+            code = cc_map.get(cc, cc)
+            co = db.query(DimCountry).filter(DimCountry.code == code).first()
+            _country_cache[cc] = co
+            return co
+        return None
+
+    # 按 (country_id, sku, month) 汇总移除费
+    sku_fees = {}  # (country_id, sku, month_str) -> Decimal
+    row_count = 0
+
+    for row in rows:
+        if not row or not row[col_sku]:
+            continue
+        sku = str(row[col_sku]).strip()
+        if not sku:
+            continue
+        fee = _safe_decimal(row[col_removal_fee]) if row[col_removal_fee] else Decimal("0")
+        if fee == 0:
+            continue
+
+        # 按行确定国家
+        row_country = _get_row_country(row)
+        if row_country is None:
+            if country_obj is not None:
+                row_country = country_obj
+            else:
+                continue
+
+        # 解析日期确定月份
+        request_date_str = str(row[col_request_date]).strip() if col_request_date is not None and row[col_request_date] else ""
+        request_date_val = _detect_date_format(request_date_str) if request_date_str else None
+        month_str = _import_ym
+        if not month_str and request_date_val:
+            month_str = f"{request_date_val.year}-{request_date_val.month:02d}"
+
+        # 写入 raw_removal_fee
+        raw = RawRemovalFee(
+            country_id=row_country.id,
+            store_id=store_id,
+            request_date=request_date_val,
+            order_id=_safe_str(row[col_order_id], 50) if col_order_id is not None and row[col_order_id] else "",
+            order_source=_safe_str(row[col_order_source], 200) if col_order_source is not None and row[col_order_source] else "",
+            order_type=_safe_str(row[col_order_type], 50) if col_order_type is not None and row[col_order_type] else "",
+            service_speed=_safe_str(row[col_service_speed], 50) if col_service_speed is not None and row[col_service_speed] else "",
+            order_status=_safe_str(row[col_order_status], 50) if col_order_status is not None and row[col_order_status] else "",
+            last_updated_date=_detect_date_format(str(row[col_last_updated]).strip()) if col_last_updated is not None and row[col_last_updated] else None,
+            sku=_safe_str(sku, 100),
+            fnsku=_safe_str(row[col_fnsku], 50) if col_fnsku is not None and row[col_fnsku] else "",
+            disposition=_safe_str(row[col_disposition], 50) if col_disposition is not None and row[col_disposition] else "",
+            requested_quantity=_safe_int(row[col_requested_qty]) if col_requested_qty is not None else 0,
+            cancelled_quantity=_safe_int(row[col_cancelled_qty]) if col_cancelled_qty is not None else 0,
+            disposed_quantity=_safe_int(row[col_disposed_qty]) if col_disposed_qty is not None else 0,
+            shipped_quantity=_safe_int(row[col_shipped_qty]) if col_shipped_qty is not None else 0,
+            in_process_quantity=_safe_int(row[col_in_process_qty]) if col_in_process_qty is not None else 0,
+            removal_fee=fee,
+            currency=_safe_str(row[col_currency], 10) if col_currency is not None and row[col_currency] else "",
+            raw_data=_json_safe(header, row),
+        )
+        db.add(raw)
+
+        # 汇总到 sku_fees
+        key = (row_country.id, sku, month_str or "")
+        sku_fees[key] = sku_fees.get(key, Decimal("0")) + fee
+        row_count += 1
+
+    db.flush()
+
+    # 按 SKU 匹配产品，更新 monthly_summary 的 removal_fee_usd
+    summary_updated = 0
+    for (cid, sku, ym), total_fee in sku_fees.items():
+        # SKU 匹配产品
+        product = db.query(DimProduct).filter(DimProduct.sku == sku).first()
+        if not product:
+            continue
+
+        # 查找或创建 monthly_summary
+        time_obj = db.query(DimTime).filter(DimTime.year_month == ym).first() if ym else None
+        if not time_obj:
+            continue
+
+        summary = db.query(MonthlySummary).filter(
+            MonthlySummary.country_id == cid,
+            MonthlySummary.product_id == product.id,
+            MonthlySummary.time_id == time_obj.id,
+            MonthlySummary.store_id == store_id,
+        ).first()
+        if not summary:
+            # 不存在则创建
+            summary = MonthlySummary(
+                country_id=cid,
+                store_id=store_id,
+                product_id=product.id,
+                time_id=time_obj.id,
+                removal_fee_usd=total_fee,
+            )
+            db.add(summary)
+        else:
+            summary.removal_fee_usd = (summary.removal_fee_usd or Decimal("0")) + total_fee
+        summary_updated += 1
+
+    db.flush()
+    return {"csv_rows": row_count, "summary_updated": summary_updated}
 
 
 def _recalculate_all_profit(db, country_obj):
@@ -3273,6 +3436,7 @@ def _recalculate_all_profit(db, country_obj):
             - Decimal(str(summary.storage_fee_usd or 0)) * er
             - Decimal(str(summary.returns_fee_usd or 0)) * er
             - Decimal(str(summary.inbound_fee_usd or 0)) * er
+            - Decimal(str(summary.removal_fee_usd or 0)) * er
         ).quantize(Decimal("0.01"))
 
         summary.net_profit_rmb = net

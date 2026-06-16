@@ -247,6 +247,7 @@ def get_cost_breakdown(
             func.sum(MonthlySummary.storage_fee_usd * MonthlySummary.exchange_rate).label("storage_rmb"),
             func.sum(MonthlySummary.returns_fee_usd * MonthlySummary.exchange_rate).label("returns_rmb"),
             func.sum(MonthlySummary.inbound_fee_usd * MonthlySummary.exchange_rate).label("inbound_rmb"),
+            func.sum(MonthlySummary.removal_fee_usd * MonthlySummary.exchange_rate).label("removal_rmb"),
             func.sum(MonthlySummary.promo_rebate_usd * MonthlySummary.exchange_rate).label("promo_rmb"),
             func.sum(MonthlySummary.adjustment_usd * MonthlySummary.exchange_rate).label("adjustment_rmb"),
         )
@@ -274,6 +275,7 @@ def get_cost_breakdown(
         storage = abs(float(row.storage_rmb or 0))
         returns = abs(float(row.returns_rmb or 0))
         inbound = abs(float(row.inbound_rmb or 0))
+        removal = abs(float(row.removal_rmb or 0))
         promo = abs(float(row.promo_rmb or 0))
         adjustment = float(row.adjustment_rmb or 0)
 
@@ -286,6 +288,7 @@ def get_cost_breakdown(
             {"name": "头程运费", "value": round(freight, 2)},
             {"name": "仓储费", "value": round(storage, 2)},
             {"name": "入库费", "value": round(inbound, 2)},
+            {"name": "移除费", "value": round(removal, 2)},
             {"name": "退货费", "value": round(returns, 2)},
             {"name": "促销扣减", "value": round(promo, 2)},
         ]

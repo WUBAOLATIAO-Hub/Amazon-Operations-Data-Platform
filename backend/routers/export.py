@@ -89,6 +89,7 @@ def export_monthly_summary(
                 func.coalesce(func.sum(MonthlySummary.storage_fee_usd), 0).label("storage_fee_usd"),
                 func.coalesce(func.sum(MonthlySummary.returns_fee_usd), 0).label("returns_fee_usd"),
                 func.coalesce(func.sum(MonthlySummary.inbound_fee_usd), 0).label("inbound_fee_usd"),
+                func.coalesce(func.sum(MonthlySummary.removal_fee_usd), 0).label("removal_fee_usd"),
                 func.coalesce(func.sum(MonthlySummary.promo_rebate_usd), 0).label("promo_rebate_usd"),
                 func.coalesce(func.sum(MonthlySummary.product_cost_rmb), 0).label("product_cost_rmb"),
                 func.coalesce(func.sum(MonthlySummary.freight_cost_rmb), 0).label("freight_cost_rmb"),
@@ -133,7 +134,7 @@ def export_monthly_summary(
             "销量", "单价(¥)", "运费/台(¥)",
             "销售额($)", "销售额(¥)",
             "佣金($)", "FBA($)", "广告($)",
-            "仓储+退货+入库($)", "采购成本(¥)", "头程运费(¥)",
+            "仓储+退货+入库+移除($)", "采购成本(¥)", "头程运费(¥)",
             "净利润(¥)", "净利率"
         ]
 
@@ -156,7 +157,7 @@ def export_monthly_summary(
             commission = float(r.commission_usd or 0)
             fba = float(r.fba_fee_usd or 0)
             ad = float(r.ad_spend_usd or 0)
-            storage = float(r.storage_fee_usd or 0) + float(r.returns_fee_usd or 0) + float(r.inbound_fee_usd or 0)
+            storage = float(r.storage_fee_usd or 0) + float(r.returns_fee_usd or 0) + float(r.inbound_fee_usd or 0) + float(r.removal_fee_usd or 0)
             promo = float(r.promo_rebate_usd or 0)
             cost_rmb = float(r.product_cost_rmb or 0)
             freight_rmb = float(r.freight_cost_rmb or 0)
@@ -275,6 +276,7 @@ def export_country_summary(
                 func.coalesce(func.sum(MonthlySummary.storage_fee_usd), 0).label("storage_fee_usd"),
                 func.coalesce(func.sum(MonthlySummary.returns_fee_usd), 0).label("returns_fee_usd"),
                 func.coalesce(func.sum(MonthlySummary.inbound_fee_usd), 0).label("inbound_fee_usd"),
+                func.coalesce(func.sum(MonthlySummary.removal_fee_usd), 0).label("removal_fee_usd"),
                 func.coalesce(func.sum(MonthlySummary.product_cost_rmb), 0).label("product_cost_rmb"),
                 func.coalesce(func.sum(MonthlySummary.freight_cost_rmb), 0).label("freight_cost_rmb"),
                 func.coalesce(func.sum(MonthlySummary.net_profit_rmb), 0).label("net_profit_rmb"),
@@ -299,7 +301,7 @@ def export_country_summary(
             "国家代码", "国家名称", "销量",
             "销售额($)", "销售额(¥)",
             "佣金($)", "FBA($)", "广告($)",
-            "仓储($)", "退货($)", "入库($)",
+            "仓储($)", "退货($)", "入库($)", "移除费($)",
             "采购成本(¥)", "头程运费(¥)",
             "净利润(¥)", "净利率", "占比"
         ]
@@ -326,6 +328,7 @@ def export_country_summary(
                 round(float(r.commission_usd or 0), 2), round(float(r.fba_fee_usd or 0), 2),
                 round(float(r.ad_spend_usd or 0), 2), round(float(r.storage_fee_usd or 0), 2),
                 round(float(r.returns_fee_usd or 0), 2), round(float(r.inbound_fee_usd or 0), 2),
+                round(float(r.removal_fee_usd or 0), 2),
                 round(float(r.product_cost_rmb or 0), 2), round(float(r.freight_cost_rmb or 0), 2),
                 round(net, 2), f"{rate}%", f"{pct}%",
             ]
@@ -336,7 +339,7 @@ def export_country_summary(
             ws.cell(row=row_idx, column=14).font = Font(color="3F8600" if net >= 0 else "CF1322", bold=True)
 
         # 列宽
-        for i, w in enumerate([10, 12, 8, 12, 12, 10, 10, 10, 10, 10, 10, 12, 12, 12, 8, 8], 1):
+        for i, w in enumerate([10, 12, 8, 12, 12, 10, 10, 10, 10, 10, 10, 10, 12, 12, 12, 8, 8], 1):
             ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
 
         ws.freeze_panes = "A2"
