@@ -12,3 +12,9 @@ dist/
 .DS_Store
 *.tmp
 ~$*
+*.db
+*.bak
+backend/uploads/*
+audit_*.txt
+audit_*.py
+backend/cleanup_*.py

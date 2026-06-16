@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Row, Col, Select, Card, Table, Statistic, Spin, message } from 'antd'
-import { DollarOutlined, AimOutlined, LineChartOutlined } from '@ant-design/icons'
+import { AimOutlined, LineChartOutlined } from '@ant-design/icons'
 import { getAdvertisingSummary, getAdvertisingDetail, getStores, getCountries } from '../api'
 
 // 最近24个月选项
@@ -125,22 +125,22 @@ export default function Advertising() {
       sorter: true,
     },
     {
-      title: '花费 (USD)',
+      title: '花费 (RMB)',
       dataIndex: 'ad_spend',
       key: 'ad_spend',
       width: 120,
       align: 'right',
       sorter: true,
-      render: (val) => `$${formatMoney(val)}`,
+      render: (val) => `¥${formatMoney(val)}`,
     },
     {
-      title: '销售额 (USD)',
+      title: '销售额 (RMB)',
       dataIndex: 'ad_sales',
       key: 'ad_sales',
       width: 130,
       align: 'right',
       sorter: true,
-      render: (val) => `$${formatMoney(val)}`,
+      render: (val) => `¥${formatMoney(val)}`,
     },
     {
       title: 'ACOS',
@@ -176,7 +176,7 @@ export default function Advertising() {
       width: 90,
       align: 'right',
       sorter: true,
-      render: (val) => `$${formatMoney(val)}`,
+      render: (val) => `¥${formatMoney(val)}`,
     },
     {
       title: '展示次数',
@@ -256,10 +256,10 @@ export default function Advertising() {
           <Col xs={24} sm={8}>
             <Card hoverable>
               <Statistic
-                title="总花费 (USD)"
+                title="总花费 (RMB)"
                 value={summary?.total_ad_spend ?? 0}
                 precision={2}
-                prefix={<DollarOutlined />}
+                prefix="¥"
                 valueStyle={{ color: '#cf1322' }}
               />
             </Card>

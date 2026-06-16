@@ -641,15 +641,31 @@ export default function Dashboard() {
     const chart = costPieInstanceRef.current
 
     const sales = costData.sales || 1
-    const pieData = costData.expenses
-      .filter(e => e.value > 0)
-      .map(e => ({
-        name: e.name,
-        value: Math.round(e.value),
-        pct: (e.value / sales * 100).toFixed(1),
-      }))
+    const pieData = [
+      ...costData.expenses
+        .filter(e => e.value > 0)
+        .map(e => ({
+          name: e.name,
+          value: Math.round(e.value),
+          pct: (e.value / sales * 100).toFixed(1),
+        })),
+      // 净利润（正数才显示）
+      ...(costData.net_profit > 0 ? [{
+        name: '净利润',
+        value: Math.round(costData.net_profit),
+        pct: (costData.net_profit / sales * 100).toFixed(1),
+        isProfit: true,
+      }] : []),
+    ]
+
+    // 默认色 + 净利润用绿色
+    const defaultColors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc', '#52c41a']
+    const profitIdx = pieData.findIndex(d => d.name === '净利润')
+    const colors = [...defaultColors]
+    if (profitIdx >= 0) colors[profitIdx] = '#52c41a'
 
     const option = {
+      color: colors,
       tooltip: {
         trigger: 'item',
         formatter: function(params) {

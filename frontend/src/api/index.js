@@ -5,6 +5,27 @@ const api = axios.create({
   timeout: 30000,
 })
 
+// 请求拦截：自动带上 token
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+// 响应拦截：401 自动跳转登录
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (err.response?.status === 401) {
+      localStorage.removeItem('token')
+      window.location.href = '/login'
+    }
+    return Promise.reject(err)
+  }
+)
+
 // 看板
 export const getDashboardSummary = (params) => api.get('/dashboard/summary', { params })
 export const getDashboardTrend = (params) => api.get('/dashboard/trend', { params })
@@ -77,5 +98,39 @@ export const getCountrySummary = (params) => api.get('/query/country-summary', {
 // 导出
 export const exportMonthlySummary = (params) => api.get('/export/monthly-summary', { params, responseType: 'blob' })
 export const exportCountrySummary = (params) => api.get('/export/country-summary', { params, responseType: 'blob' })
+
+// 认证
+export const authLogin = async (username, password) => {
+  const formData = new URLSearchParams()
+  formData.append('username', username)
+  formData.append('password', password)
+  const res = await api.post('/auth/login', formData, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  })
+  return res.data
+}
+export const authMe = async () => {
+  const res = await api.get('/auth/me')
+  return res.data
+}
+export const authChangePassword = (data) => api.post('/auth/change-password', data)
+
+// 用户管理（管理员）
+export const getUsers = async () => {
+  const res = await api.get('/auth/users')
+  return res.data
+}
+export const createUser = async (data) => {
+  const res = await api.post('/auth/users', data)
+  return res.data
+}
+export const updateUser = async (userId, data) => {
+  const res = await api.put(`/auth/users/${userId}`, data)
+  return res.data
+}
+export const deleteUser = async (userId) => {
+  const res = await api.delete(`/auth/users/${userId}`)
+  return res.data
+}
 
 export default api

@@ -1,22 +1,33 @@
 import React, { useState, useEffect } from 'react'
-import { Card, Table, Button, Modal, Input, InputNumber, message, Popconfirm, Space, Tabs, Select, Spin } from 'antd'
-import { PlusOutlined, DeleteOutlined, EditOutlined, ShopOutlined, GlobalOutlined, DollarOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Card, Table, Button, Modal, Input, InputNumber, message, Popconfirm, Space, Tabs, Select, Spin, Switch, Tag } from 'antd'
+import { PlusOutlined, DeleteOutlined, EditOutlined, ShopOutlined, GlobalOutlined, DollarOutlined, ReloadOutlined, UserOutlined } from '@ant-design/icons'
 import {
   getStores, createStore, updateStore, deleteStore,
   getCountries, createCountry, updateCountry, deleteCountry,
   getExchangeRates, createExchangeRate, updateExchangeRate, deleteExchangeRate,
   getStoreCountries, recalculateProfit,
+  getUsers, createUser, updateUser, deleteUser,
 } from '../api'
+import { useAuth } from '../contexts/AuthContext'
 
 export default function SystemAdmin() {
   const [tab, setTab] = useState('stores')
+  const { user } = useAuth()
+
+  const tabs = [
+    { key: 'stores', label: <><ShopOutlined /> 店铺管理</>, children: <StoreManager /> },
+    { key: 'countries', label: <><GlobalOutlined /> 国家管理</>, children: <CountryManager /> },
+    { key: 'rates', label: <><DollarOutlined /> 汇率管理</>, children: <RateManager /> },
+    { key: 'tools', label: <><ReloadOutlined /> 数据工具</>, children: <DataTools /> },
+  ]
+
+  // 管理员才显示用户管理
+  if (user?.is_admin) {
+    tabs.push({ key: 'users', label: <><UserOutlined /> 用户管理</>, children: <UserManager /> })
+  }
+
   return (
-    <Tabs activeKey={tab} onChange={setTab} items={[
-      { key: 'stores', label: <><ShopOutlined /> 店铺管理</>, children: <StoreManager /> },
-      { key: 'countries', label: <><GlobalOutlined /> 国家管理</>, children: <CountryManager /> },
-      { key: 'rates', label: <><DollarOutlined /> 汇率管理</>, children: <RateManager /> },
-      { key: 'tools', label: <><ReloadOutlined /> 数据工具</>, children: <DataTools /> },
-    ]} />
+    <Tabs activeKey={tab} onChange={setTab} items={tabs} />
   )
 }
 
@@ -84,66 +95,39 @@ function RateManager() {
   }
   useEffect(()=>{fetchRatesAndStores()},[])
 
-  // 根据选中店铺动态加载国家
   useEffect(() => {
     if (selectedStore) {
-      getStoreCountries(selectedStore).then(res => {
-        setCountries(res.data || [])
-      })
+      getStoreCountries(selectedStore).then(res => { setCountries(res.data || []) })
     } else {
-      getCountries().then(res => {
-        setCountries(res.data || [])
-      })
+      getCountries().then(res => { setCountries(res.data || []) })
     }
   }, [selectedStore])
 
-  // 筛选：按店铺+年月
   const filtered = rates.filter(r => {
     if (selectedStore && r.store !== selectedStore) return false
     if (r.year_month !== ym) return false
     return true
   })
 
-  // 构建表格数据：每个国家一行，没有记录的国家也显示
   const tableData = countries.map(c => {
     const existing = filtered.find(r => r.country_code === c.code)
     return {
-      key: c.id,
-      country_code: c.code,
-      country_name: c.name,
-      rate: existing ? existing.rate : null,
-      id: existing ? existing.id : null,
-      hasRate: !!existing,
+      key: c.id, country_code: c.code, country_name: c.name,
+      rate: existing ? existing.rate : null, id: existing ? existing.id : null, hasRate: !!existing,
     }
   })
 
-  const openEdit = (record) => {
-    setEditing(true)
-    setEditId(record.id)
-    setCid(record.key)
-    setRate(record.rate || 0)
-    setOpen(true)
-  }
-  const openAdd = (record) => {
-    setEditing(false)
-    setEditId(null)
-    setCid(record ? record.key : countries[0]?.id)
-    setRate(0)
-    setOpen(true)
-  }
+  const openEdit = (record) => { setEditing(true); setEditId(record.id); setCid(record.key); setRate(record.rate || 0); setOpen(true) }
+  const openAdd = (record) => { setEditing(false); setEditId(null); setCid(record ? record.key : countries[0]?.id); setRate(0); setOpen(true) }
   const save = async () => {
-    if (editing) {
-      await updateExchangeRate(editId, rate)
-    } else {
-      await createExchangeRate(cid, ym, rate, selectedStore)
-    }
+    if (editing) { await updateExchangeRate(editId, rate) }
+    else { await createExchangeRate(cid, ym, rate, selectedStore) }
     message.success(editing ? '已更新' : '已创建')
     setOpen(false); setEditing(false); fetchRatesAndStores()
   }
 
   return (
     <div>
-      {/* 筛选栏 */}
       <div style={{display:'flex',gap:16,marginBottom:16,alignItems:'center'}}>
         <span>店铺</span>
         <Select style={{width:180}} value={selectedStore} onChange={setSelectedStore} allowClear placeholder="全部"
@@ -154,16 +138,12 @@ function RateManager() {
         <Select style={{width:90}} value={selectedMonth} onChange={setSelectedMonth}
           options={Array.from({length:12},(_,i)=>({value:i+1,label:`${i+1}月`}))}/>
       </div>
-
-      {/* 汇率表 */}
       <Table rowKey="key" size="small" loading={loading} dataSource={tableData} pagination={false}
         columns={[
           {title:'国家',dataIndex:'country_code',width:80,render:(v,r)=><strong>{v}</strong>},
           {title:'名称',dataIndex:'country_name',width:100},
           {title:'汇率 (兑人民币)',dataIndex:'rate',width:150,
-            render:(v,r)=> r.hasRate
-              ? <span style={{fontSize:16,fontWeight:600}}>{v?.toFixed(4)}</span>
-              : <span style={{color:'#ccc'}}>未设置</span>},
+            render:(v,r)=> r.hasRate ? <span style={{fontSize:16,fontWeight:600}}>{v?.toFixed(4)}</span> : <span style={{color:'#ccc'}}>未设置</span>},
           {title:'操作',width:120,render:(_,r)=>(
             r.hasRate
               ? <Space size={0}>
@@ -175,22 +155,10 @@ function RateManager() {
               : <Button size="small" type="link" icon={<PlusOutlined/>} onClick={()=>openAdd(r)}>设置</Button>
           )},
         ]}/>
-
-      {/* 编辑弹窗 */}
-      <Modal title={editing ? '修改汇率' : '设置汇率'} open={open} onOk={save} onCancel={()=>setOpen(false)}
-        okText="保存" cancelText="取消">
-        <div style={{marginBottom:12}}>
-          <span>国家：</span>
-          <strong>{countries.find(c=>c.id===cid)?.code} {countries.find(c=>c.id===cid)?.name}</strong>
-        </div>
-        <div style={{marginBottom:12}}>
-          <span>年月：</span><strong>{ym}</strong>
-        </div>
-        <div>
-          <span>汇率：</span>
-          <InputNumber value={rate} onChange={setRate} step={0.01} style={{width:200}} autoFocus/>
-          <span style={{marginLeft:8,color:'#999'}}>→ RMB</span>
-        </div>
+      <Modal title={editing ? '修改汇率' : '设置汇率'} open={open} onOk={save} onCancel={()=>setOpen(false)} okText="保存" cancelText="取消">
+        <div style={{marginBottom:12}}><span>国家：</span><strong>{countries.find(c=>c.id===cid)?.code} {countries.find(c=>c.id===cid)?.name}</strong></div>
+        <div style={{marginBottom:12}}><span>年月：</span><strong>{ym}</strong></div>
+        <div><span>汇率：</span><InputNumber value={rate} onChange={setRate} step={0.01} style={{width:200}} autoFocus/><span style={{marginLeft:8,color:'#999'}}>→ RMB</span></div>
       </Modal>
     </div>
   )
@@ -204,28 +172,19 @@ function DataTools() {
     setLoading(true)
     try {
       const res = await recalculateProfit(country || null)
-      if (res.data.detail) {
-        message.error(res.data.detail)
-      } else {
-        setResults(res.data.results)
-        message.success(res.data.message || '重算完成')
-      }
-    } catch (e) {
-      message.error('重算失败: ' + (e.response?.data?.detail || e.message))
-    }
+      if (res.data.detail) { message.error(res.data.detail) }
+      else { setResults(res.data.results); message.success(res.data.message || '重算完成') }
+    } catch (e) { message.error('重算失败: ' + (e.response?.data?.detail || e.message)) }
     setLoading(false)
   }
 
   return (
     <Card title="数据重算工具" extra={<Spin spinning={loading} />}>
       <p style={{marginBottom:16,color:'#666'}}>
-        修改汇率或修复数据后，点击下方按钮重新计算所有产品的净利润。
-        <br/>数据量大时可能需要等待 10-30 秒。
+        修改汇率或修复数据后，点击下方按钮重新计算所有产品的净利润。<br/>数据量大时可能需要等待 10-30 秒。
       </p>
       <Space>
-        <Button type="primary" icon={<ReloadOutlined/>} loading={loading} onClick={()=>handleRecalculate()}>
-          重算全部国家
-        </Button>
+        <Button type="primary" icon={<ReloadOutlined/>} loading={loading} onClick={()=>handleRecalculate()}>重算全部国家</Button>
       </Space>
       {results && (
         <Table rowKey="country" size="small" style={{marginTop:16}} dataSource={Object.entries(results).map(([k,v])=>({country:k,...v}))} pagination={false}
@@ -236,6 +195,119 @@ function DataTools() {
             {title:'记录数',dataIndex:'summary_count',width:100},
           ]}/>
       )}
+    </Card>
+  )
+}
+
+function UserManager() {
+  const [users, setUsers] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [open, setOpen] = useState(false)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const [editUser, setEditUser] = useState(null)
+  const [editPassword, setEditPassword] = useState('')
+  const [editIsAdmin, setEditIsAdmin] = useState(false)
+
+  const fetch = async () => {
+    setLoading(true)
+    try { setUsers(await getUsers()) } catch (e) { /* ignore */ }
+    setLoading(false)
+  }
+  useEffect(() => { fetch() }, [])
+
+  const handleCreate = async () => {
+    if (!username || !password) { message.warning('请填写用户名和密码'); return }
+    try {
+      await createUser({ username, password, is_admin: isAdmin })
+      message.success('用户创建成功')
+      setOpen(false); setUsername(''); setPassword(''); setIsAdmin(false); fetch()
+    } catch (e) {
+      message.error(e.response?.data?.detail || '创建失败')
+    }
+  }
+
+  const handleUpdate = async () => {
+    if (!editUser) return
+    try {
+      const data = { is_admin: editIsAdmin }
+      if (editPassword) data.password = editPassword
+      await updateUser(editUser.id, data)
+      message.success('更新成功')
+      setEditOpen(false); setEditUser(null); setEditPassword(''); fetch()
+    } catch (e) {
+      message.error(e.response?.data?.detail || '更新失败')
+    }
+  }
+
+  const handleDelete = async (userId) => {
+    try {
+      await deleteUser(userId)
+      message.success('已删除'); fetch()
+    } catch (e) {
+      message.error(e.response?.data?.detail || '删除失败')
+    }
+  }
+
+  return (
+    <Card>
+      <Space style={{ marginBottom: 16 }}>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>创建用户</Button>
+      </Space>
+      <Table rowKey="id" size="small" loading={loading} dataSource={users} pagination={false}
+        columns={[
+          { title: 'ID', dataIndex: 'id', width: 60 },
+          { title: '用户名', dataIndex: 'username', width: 200 },
+          { title: '角色', dataIndex: 'is_admin', width: 120,
+            render: (v) => v ? <Tag color="red">管理员</Tag> : <Tag color="blue">普通用户</Tag> },
+          { title: '创建时间', dataIndex: 'created_at', width: 200 },
+          { title: '操作', width: 200, render: (_, r) => (
+            <Space size={0}>
+              <Button size="small" icon={<EditOutlined />} onClick={() => {
+                setEditUser(r); setEditPassword(''); setEditIsAdmin(!!r.is_admin); setEditOpen(true)
+              }}>编辑</Button>
+              {r.username !== 'admin' && (
+                <Popconfirm title="确定删除？" onConfirm={() => handleDelete(r.id)}>
+                  <Button danger size="small" icon={<DeleteOutlined />} />
+                </Popconfirm>
+              )}
+            </Space>
+          )},
+        ]} />
+
+      {/* 创建用户弹窗 */}
+      <Modal title="创建用户" open={open} onOk={handleCreate} onCancel={() => setOpen(false)}>
+        <div style={{ marginBottom: 12 }}>
+          <span>用户名：</span>
+          <Input value={username} onChange={e => setUsername(e.target.value)} placeholder="输入用户名" />
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <span>密码：</span>
+          <Input.Password value={password} onChange={e => setPassword(e.target.value)} placeholder="输入密码" />
+        </div>
+        <div>
+          <span>管理员权限：</span>
+          <Switch checked={isAdmin} onChange={setIsAdmin} style={{ marginLeft: 8 }} />
+        </div>
+      </Modal>
+
+      {/* 编辑用户弹窗 */}
+      <Modal title="编辑用户" open={editOpen} onOk={handleUpdate} onCancel={() => setEditOpen(false)}>
+        <div style={{ marginBottom: 12 }}>
+          <span>用户名：</span>
+          <strong>{editUser?.username}</strong>
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <span>新密码（留空不修改）：</span>
+          <Input.Password value={editPassword} onChange={e => setEditPassword(e.target.value)} placeholder="留空则不修改" />
+        </div>
+        <div>
+          <span>管理员权限：</span>
+          <Switch checked={editIsAdmin} onChange={setEditIsAdmin} disabled={editUser?.username === 'admin'} style={{ marginLeft: 8 }} />
+        </div>
+      </Modal>
     </Card>
   )
 }

@@ -1,10 +1,27 @@
 from fastapi import FastAPI, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from database import get_db
-from routers import dashboard, advertising, import_data, query, export
+from database import get_db, engine, Base
+from routers import dashboard, advertising, import_data, query, export, auth
 
 app = FastAPI(title="LMG 数据平台", version="2.0")
+
+
+@app.on_event("startup")
+def seed_admin():
+    """创建 users 表并初始化管理员账号"""
+    from models import User
+    import bcrypt
+    Base.metadata.create_all(bind=engine)
+    db = next(get_db())
+    try:
+        if not db.query(User).filter(User.username == "admin").first():
+            hashed = bcrypt.hashpw("123456".encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            admin = User(username="admin", password_hash=hashed, is_admin=1)
+            db.add(admin)
+            db.commit()
+    finally:
+        db.close()
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,6 +37,7 @@ app.include_router(advertising.router, prefix="/api/advertising", tags=["广告"
 app.include_router(import_data.router, prefix="/api/import", tags=["导入"])
 app.include_router(query.router, prefix="/api/query", tags=["查询"])
 app.include_router(export.router, prefix="/api/export", tags=["导出"])
+app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 
 
 @app.get("/api/stores")

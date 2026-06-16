@@ -15,10 +15,10 @@ def get_ad_summary(
     db: Session = Depends(get_db),
 ):
     try:
+        # 与数据看板一致：广告花费/销售额按每行汇率转RMB
         q = db.query(
-            func.sum(MonthlySummary.ad_spend_usd).label("total_ad_spend"),
-            func.avg(MonthlySummary.acos).label("avg_acos"),
-            func.avg(MonthlySummary.roas).label("avg_roas"),
+            func.sum(MonthlySummary.ad_spend_usd * MonthlySummary.exchange_rate).label("total_ad_spend_rmb"),
+            func.sum(MonthlySummary.ad_sales_usd * MonthlySummary.exchange_rate).label("total_ad_sales_rmb"),
         )
 
         if country:
@@ -34,10 +34,17 @@ def get_ad_summary(
 
         row = q.one()
 
+        total_spend = float(row.total_ad_spend_rmb or 0)
+        total_sales = float(row.total_ad_sales_rmb or 0)
+
+        # ACOS = 广告花费 / 广告销售额 × 100，ROAS = 广告销售额 / 广告花费
+        avg_acos = (total_spend / total_sales * 100) if total_sales > 0 else 0
+        avg_roas = (total_sales / total_spend) if total_spend > 0 else 0
+
         return {
-            "total_ad_spend": float(row.total_ad_spend or 0),
-            "avg_acos": float(row.avg_acos or 0),
-            "avg_roas": float(row.avg_roas or 0),
+            "total_ad_spend": round(total_spend, 2),
+            "avg_acos": round(avg_acos, 2),
+            "avg_roas": round(avg_roas, 2),
         }
 
     except Exception as e:
@@ -59,8 +66,8 @@ def get_ad_detail(
         q = db.query(
             DimProduct.product_name,
             DimProduct.asin,
-            MonthlySummary.ad_spend_usd.label("ad_spend"),
-            MonthlySummary.ad_sales_usd.label("ad_sales"),
+            (MonthlySummary.ad_spend_usd * MonthlySummary.exchange_rate).label("ad_spend_rmb"),
+            (MonthlySummary.ad_sales_usd * MonthlySummary.exchange_rate).label("ad_sales_rmb"),
             MonthlySummary.acos,
             MonthlySummary.roas,
             MonthlySummary.ctr,
@@ -82,10 +89,10 @@ def get_ad_detail(
         if store:
             q = q.join(DimStore, MonthlySummary.store_id == DimStore.id).filter(DimStore.code == store)
 
-        # 排序
+        # 排序（用RMB字段排序）
         sort_column_map = {
-            "ad_spend": MonthlySummary.ad_spend_usd,
-            "ad_sales": MonthlySummary.ad_sales_usd,
+            "ad_spend": (MonthlySummary.ad_spend_usd * MonthlySummary.exchange_rate),
+            "ad_sales": (MonthlySummary.ad_sales_usd * MonthlySummary.exchange_rate),
             "acos": MonthlySummary.acos,
             "roas": MonthlySummary.roas,
             "ctr": MonthlySummary.ctr,
@@ -98,7 +105,7 @@ def get_ad_detail(
             "asin": DimProduct.asin,
         }
 
-        sort_col = sort_column_map.get(sort_by, MonthlySummary.ad_spend_usd)
+        sort_col = sort_column_map.get(sort_by, MonthlySummary.ad_spend_usd * MonthlySummary.exchange_rate)
         if sort_order.lower() == "asc":
             q = q.order_by(sort_col.asc())
         else:
@@ -111,23 +118,27 @@ def get_ad_detail(
         offset = (page - 1) * page_size
         rows = q.offset(offset).limit(page_size).all()
 
-        data = [
-            {
+        data = []
+        for row in rows:
+            spend_rmb = float(row.ad_spend_rmb or 0)
+            sales_rmb = float(row.ad_sales_rmb or 0)
+            # ACOS/ROAS 从RMB口径计算，与数据看板一致
+            acos = (spend_rmb / sales_rmb * 100) if sales_rmb > 0 else 0
+            roas = (sales_rmb / spend_rmb) if spend_rmb > 0 else 0
+            data.append({
                 "product_name": row.product_name,
                 "asin": row.asin,
-                "ad_spend": float(row.ad_spend or 0),
-                "ad_sales": float(row.ad_sales or 0),
-                "acos": float(row.acos or 0),
-                "roas": float(row.roas or 0),
-                "ctr": float(row.ctr or 0),
-                "cpc": float(row.cpc or 0),
+                "ad_spend": round(spend_rmb, 2),
+                "ad_sales": round(sales_rmb, 2),
+                "acos": round(acos, 2),
+                "roas": round(roas, 2),
+                "ctr": round(float(row.ctr or 0) * 100, 2),
+                "cpc": round(spend_rmb / int(row.clicks or 0), 2) if int(row.clicks or 0) > 0 else 0,
                 "impressions": int(row.impressions or 0),
                 "clicks": int(row.clicks or 0),
                 "ad_orders": int(row.ad_orders or 0),
-                "conversion_rate": float(row.conversion_rate or 0),
-            }
-            for row in rows
-        ]
+                "conversion_rate": round(float(row.conversion_rate or 0) * 100, 2),
+            })
 
         return {"data": data, "total": total, "page": page, "page_size": page_size}
 

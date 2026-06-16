@@ -297,3 +297,12 @@ class RawLongTermStorage(Base):
     rate_surcharge = Column(Numeric(10, 4), default=0)
     raw_data = Column(JSON)
     created_at = Column(TIMESTAMP, server_default=func.now())
+
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(50), unique=True, nullable=False)
+    password_hash = Column(String(200), nullable=False)
+    is_admin = Column(Integer, default=0)
+    created_at = Column(TIMESTAMP, server_default=func.now())

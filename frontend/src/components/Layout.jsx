@@ -1,55 +1,48 @@
 import React, { useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
-import { Layout as AntLayout, Menu, theme } from 'antd'
+import { Layout as AntLayout, Menu, theme, Dropdown, Button, Space } from 'antd'
 import {
   DashboardOutlined,
   BarChartOutlined,
   ImportOutlined,
   SearchOutlined,
   SettingOutlined,
+  LogoutOutlined,
+  UserOutlined,
 } from '@ant-design/icons'
+import { useAuth } from '../contexts/AuthContext'
 
 const { Sider, Content, Header } = AntLayout
-
-const menuItems = [
-  {
-    key: '/dashboard',
-    icon: <DashboardOutlined />,
-    label: '数据看板',
-  },
-  {
-    key: '/advertising',
-    icon: <BarChartOutlined />,
-    label: '广告分析',
-  },
-  {
-    key: '/import',
-    icon: <ImportOutlined />,
-    label: '数据导入',
-  },
-  {
-    key: '/query',
-    icon: <SearchOutlined />,
-    label: '数据查询',
-  },
-  {
-    key: '/admin',
-    icon: <SettingOutlined />,
-    label: '系统管理',
-  },
-]
 
 export default function Layout() {
   const [collapsed, setCollapsed] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
+  const { user, logout } = useAuth()
   const {
     token: { colorBgContainer, borderRadiusLG },
   } = theme.useToken()
 
+  const menuItems = [
+    { key: '/dashboard', icon: <DashboardOutlined />, label: '数据看板' },
+    { key: '/advertising', icon: <BarChartOutlined />, label: '广告分析' },
+    { key: '/import', icon: <ImportOutlined />, label: '数据导入' },
+    { key: '/query', icon: <SearchOutlined />, label: '数据查询' },
+    { key: '/admin', icon: <SettingOutlined />, label: '系统管理' },
+  ]
+
   const onMenuClick = ({ key }) => {
     navigate(key)
   }
+
+  const handleLogout = () => {
+    logout()
+    navigate('/login')
+  }
+
+  const userMenuItems = [
+    { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', onClick: handleLogout },
+  ]
 
   return (
     <AntLayout style={{ minHeight: '100vh' }}>
@@ -100,12 +93,18 @@ export default function Layout() {
             background: colorBgContainer,
             display: 'flex',
             alignItems: 'center',
+            justifyContent: 'space-between',
             borderBottom: '1px solid #f0f0f0',
           }}
         >
           <span style={{ fontSize: 16, fontWeight: 500 }}>
             {menuItems.find((item) => item.key === location.pathname)?.label || 'LMG 数据平台'}
           </span>
+          <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
+            <Button type="text" icon={<UserOutlined />}>
+              {user?.username}
+            </Button>
+          </Dropdown>
         </Header>
         <Content
           style={{
