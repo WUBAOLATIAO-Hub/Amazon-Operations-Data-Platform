@@ -977,18 +977,19 @@ async def import_product_info(
 
         header = [str(h).strip() if h else "" for h in rows[0]]
 
-        # 找列索引（精确匹配优先，避免 "产品" 误匹配 "产品运费/台"）
+        # 找列索引（精确匹配优先，大小写不敏感，避免 "产品" 误匹配 "产品运费/台"）
         col_map = {}
         field_names = ["ASIN", "SKU", "产品", "型号", "颜色", "成本RMB", "产品运费/台", "汇率", "时间",
                        "英国运费", "爱尔兰运费", "其他站点运费", "英国站运费", "英国站点运费", "运费", "爱尔兰站运费", "爱尔兰站点运费"]
         for i, h in enumerate(header):
+            hl = h.lower() if h else ""
             for fn in field_names:
-                if h == fn:           # 精确匹配
+                if hl == fn.lower():   # 精确匹配（大小写不敏感）
                     col_map[fn] = i
                     break
             else:
                 for fn in field_names:
-                    if fn in h:        # 模糊匹配（fallback）
+                    if fn.lower() in hl:  # 模糊匹配（大小写不敏感）
                         col_map[fn] = i
                         break
 
@@ -1068,7 +1069,10 @@ async def import_product_info(
                     DimProductCost.product_id == product.id,
                     DimProductCost.year_month == ym
                 ).first()
-                if not existing_cost:
+                if existing_cost:
+                    existing_cost.cost_rmb = cost_rmb
+                    existing_cost.freight_per_unit = freight
+                else:
                     db.add(DimProductCost(product_id=product.id, year_month=ym, cost_rmb=cost_rmb, freight_per_unit=freight))
 
             # 独立国家运费写入 dim_freight（upsert）
@@ -1960,7 +1964,8 @@ async def import_workbook(
             data_rows = rows[1:]
             if "asin" in header_set and any("成本" in h or "cost" in h for h in header):
                 return "product_info", header, data_rows
-            if any("商品" in h for h in header) and any("花费" in h or "roas" in h for h in header):
+            if any(kw in h for kw in ("商品", "campaign", "asin", "product", "advertised") for h in header) \
+                    and any(kw in h for kw in ("花费", "spend", "cost", "acos", "roas") for h in header):
                 return "advertising", header, data_rows
             if any("returns_fee" in h or "returned_units" in h for h in header):
                 return "returns", header, data_rows
@@ -2210,16 +2215,18 @@ async def import_workbook(
 
 
 def _find_col(header, *names):
-    """在表头中查找列索引（精确匹配优先，避免 "产品" 误匹配 "产品运费/台"）"""
-    # 第一轮：精确匹配
+    """在表头中查找列索引（精确匹配优先，大小写不敏感，避免 "产品" 误匹配 "产品运费/台"）"""
+    # 第一轮：精确匹配（大小写不敏感）
     for i, h in enumerate(header):
+        hl = h.lower() if h else ""
         for name in names:
-            if h == name:
+            if hl == name.lower():
                 return i
-    # 第二轮：模糊匹配
+    # 第二轮：模糊匹配（大小写不敏感）
     for i, h in enumerate(header):
+        hl = h.lower() if h else ""
         for name in names:
-            if name in h:
+            if name.lower() in hl:
                 return i
     return None
 
@@ -2700,7 +2707,10 @@ def _process_product_info_sheet(db, header, rows, import_year=None, import_month
             ym = f"{import_year}-{import_month:02d}"
         if ym:
             pc = db.query(DimProductCost).filter(DimProductCost.product_id == product.id, DimProductCost.year_month == ym).first()
-            if not pc:
+            if pc:
+                pc.cost_rmb = cost
+                pc.freight_per_unit = freight
+            else:
                 db.add(DimProductCost(product_id=product.id, year_month=ym, cost_rmb=cost, freight_per_unit=freight))
 
         # 独立国家运费写入 dim_freight（upsert）
