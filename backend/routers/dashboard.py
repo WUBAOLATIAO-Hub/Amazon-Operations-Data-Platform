@@ -489,10 +489,13 @@ def get_top_returns(
             refund_q = refund_q.join(DimCountry, RawTransaction.country_id == DimCountry.id).filter(DimCountry.code == country.upper())
         if store:
             refund_q = refund_q.join(DimStore, RawTransaction.store_id == DimStore.id).filter(DimStore.code == store)
-        if year:
-            refund_q = refund_q.filter(extract('year', RawTransaction.transaction_date) == year)
-        if month:
-            refund_q = refund_q.filter(extract('month', RawTransaction.transaction_date) == month)
+        # 按导入月份筛选（用 time_id，不看数据内日期）
+        if year or month:
+            refund_q = refund_q.join(DimTime, RawTransaction.time_id == DimTime.id)
+            if year:
+                refund_q = refund_q.filter(DimTime.time_year == year)
+            if month:
+                refund_q = refund_q.filter(DimTime.time_month == month)
 
         refund_q = refund_q.group_by(RawTransaction.sku).order_by(func.sum(func.abs(RawTransaction.total)).desc()).limit(limit)
         refund_rows = refund_q.all()
@@ -510,10 +513,13 @@ def get_top_returns(
             RawTransaction.transaction_type == "Order",
             RawTransaction.sku.in_(sku_list)
         )
-        if year:
-            order_q = order_q.filter(extract('year', RawTransaction.transaction_date) == year)
-        if month:
-            order_q = order_q.filter(extract('month', RawTransaction.transaction_date) == month)
+        # 按导入月份筛选（用 time_id，不看数据内日期）
+        if year or month:
+            order_q = order_q.join(DimTime, RawTransaction.time_id == DimTime.id)
+            if year:
+                order_q = order_q.filter(DimTime.time_year == year)
+            if month:
+                order_q = order_q.filter(DimTime.time_month == month)
         order_q = order_q.group_by(RawTransaction.sku)
         order_map = {r.sku: r for r in order_q.all()}
 
@@ -574,10 +580,11 @@ def get_transfer_summary(
             RawTransaction.country_id,
             RawTransaction.store_id,
             RawTransaction.transaction_type,
-            extract('year', RawTransaction.transaction_date).label('txn_year'),
-            extract('month', RawTransaction.transaction_date).label('txn_month'),
+            DimTime.time_year.label('txn_year'),
+            DimTime.time_month.label('txn_month'),
             func.sum(RawTransaction.total).label('total_usd'),
             func.count(RawTransaction.id).label('cnt'),
+        ).join(DimTime, RawTransaction.time_id == DimTime.id
         ).filter(
             RawTransaction.transaction_type.in_(transfer_types)
         )
@@ -590,16 +597,17 @@ def get_transfer_summary(
             q = q.join(DimStore, RawTransaction.store_id == DimStore.id).filter(
                 DimStore.code == store
             )
+        # 按导入月份筛选（用 time_id，不看数据内日期）
         if year:
-            q = q.filter(extract('year', RawTransaction.transaction_date) == year)
+            q = q.filter(DimTime.time_year == year)
         if month:
-            q = q.filter(extract('month', RawTransaction.transaction_date) == month)
+            q = q.filter(DimTime.time_month == month)
 
         q = q.group_by(
             RawTransaction.country_id,
             RawTransaction.store_id,
             RawTransaction.transaction_type,
-            'txn_year', 'txn_month'
+            DimTime.time_year, DimTime.time_month
         )
         rows = q.all()
 
