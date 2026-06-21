@@ -46,15 +46,24 @@ export default function DataQuery() {
   const keywordRef = useRef(keyword)
   keywordRef.current = keyword
 
+  // 请求竞态防护：记录当前正在请求的 store，响应回来后比对
+  const storeRef = useRef(store)
+  storeRef.current = store
+  const countryRef = useRef(country)
+  countryRef.current = country
+
   // 拉取国家汇总
   const fetchCountrySummary = async () => {
     if (!store || country) { setCountryData([]); return }
+    const reqStore = store
+
     setCountryLoading(true)
     try {
       const params = { store }
       if (year) params.year = year
       if (month) params.month = month
       const res = await getCountrySummary(params)
+      if (reqStore !== storeRef.current) return
       setCountryData(res.data?.data || [])
     } catch {
       setCountryData([])
@@ -65,12 +74,15 @@ export default function DataQuery() {
 
   // 拉取产品明细
   const fetchData = async (page = 1, pageSize = 50, sortField, sortOrder) => {
+    const reqStore = store          // 发起请求时的店铺
+    const reqCountry = country      // 发起请求时的国家
+
     setLoading(true)
     try {
       const kw = keywordRef.current.trim()
       const params = { page, page_size: pageSize }
-      if (country) params.country = country
-      if (store) params.store = store
+      if (reqCountry) params.country = reqCountry
+      if (reqStore) params.store = reqStore
       if (year) params.year = year
       if (month) params.month = month
       if (kw) params.keyword = kw
@@ -78,6 +90,8 @@ export default function DataQuery() {
       if (sortOrder) params.sort_order = sortOrder === 'ascend' ? 'asc' : 'desc'
 
       const res = await getMonthlySummary(params)
+      // 响应回来时校验：店铺/国家是否已经切换
+      if (reqStore !== storeRef.current || reqCountry !== countryRef.current) return
       const result = res.data
       setData(result.data || [])
       setTotals(result.totals || {})
@@ -101,8 +115,11 @@ export default function DataQuery() {
     }).catch(() => {})
   }, [])
 
-  // 筛选条件变化时自动查询
+  // 筛选条件变化时：先清空旧数据，再发起新查询
   useEffect(() => {
+    setData([])
+    setTotals({})
+    setCountryData([])
     if (store) {
       fetchData(1, pagination.pageSize, sorter.field, sorter.order)
       fetchCountrySummary()
@@ -275,6 +292,7 @@ export default function DataQuery() {
       {!country && countryData.length > 0 && (
         <Card size="small" title="国家汇总" style={{ marginBottom: 12 }} extra={<span style={{ color: '#999', fontSize: 12 }}>点击行查看该国家产品明细</span>}>
           <Table
+            key={`country-${store}-${year}-${month}`}
             rowKey="country_code"
             size="small"
             loading={countryLoading}
@@ -332,6 +350,7 @@ export default function DataQuery() {
         }
       >
         <Table
+          key={`${store}-${country}-${year}-${month}`}
           rowKey={r => `${r.asin}-${r.sku}`}
           columns={columns}
           dataSource={data}

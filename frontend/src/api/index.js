@@ -92,8 +92,8 @@ export const deleteExchangeRate = (id) => api.delete(`/admin/exchange-rates/${id
 export const recalculateProfit = (country) => api.post('/import/recalculate', null, { params: country ? { country } : {} })
 
 // 查询
-export const getMonthlySummary = (params) => api.get('/query/monthly-summary', { params })
-export const getCountrySummary = (params) => api.get('/query/country-summary', { params })
+export const getMonthlySummary = (params, config) => api.get('/query/monthly-summary', { params, ...config })
+export const getCountrySummary = (params, config) => api.get('/query/country-summary', { params, ...config })
 
 // 导出
 export const exportMonthlySummary = (params) => api.get('/export/monthly-summary', { params, responseType: 'blob' })
