@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Select, Tabs, Upload, Card, Alert, Spin, message, Typography, Space, Tag, Button, Collapse, Modal } from 'antd'
 import { InboxOutlined, CheckCircleOutlined, CloseCircleOutlined, WarningOutlined } from '@ant-design/icons'
-import { getImportSupported, uploadFile, uploadWorkbook, getStores, getCountries } from '../api'
+import { getImportSupported, uploadFile, uploadWorkbook, uploadFolder, getStores, getCountries } from '../api'
 import axios from 'axios'
 
 const { Dragger } = Upload
@@ -42,6 +42,11 @@ export default function DataImport() {
   // 工作簿导入状态
   const [wbUploading, setWbUploading] = useState(false)
   const [wbResult, setWbResult] = useState(null)
+
+  // 文件夹批量导入状态
+  const [folderUploading, setFolderUploading] = useState(false)
+  const [folderResult, setFolderResult] = useState(null)
+  const [folderYear, setFolderYear] = useState(2026)
 
   // 支持的字段信息
   const [supportedInfo, setSupportedInfo] = useState({})
@@ -386,8 +391,125 @@ export default function DataImport() {
     )
   }
 
+  // 文件夹批量导入处理
+  const handleFolderUpload = async (options) => {
+    const { fileList, onSuccess, onError } = options
+    if (!fileList || fileList.length === 0) {
+      onError(new Error('请选择文件夹'))
+      return
+    }
+    setFolderUploading(true)
+    setFolderResult(null)
+    try {
+      const files = fileList.map(f => f.originFileObj || f)
+      const res = await uploadFolder(files, folderYear)
+      setFolderResult(res.data)
+      message.success('文件夹批量导入完成')
+      onSuccess(res.data)
+    } catch (err) {
+      const errMsg = err.response?.data?.detail || err.message
+      if (errMsg !== 'canceled') message.error('导入失败：' + errMsg)
+      onError(err)
+    } finally {
+      setFolderUploading(false)
+    }
+  }
+
+  // 文件夹导入结果渲染
+  const renderFolderResult = () => {
+    if (!folderResult) return null
+    if (folderResult.detail) {
+      return <Alert type="error" showIcon message={folderResult.detail} style={{ marginTop: 16 }} />
+    }
+    const { message: msg, files_processed, skipped, results } = folderResult
+    const items = []
+    if (results) {
+      Object.entries(results).forEach(([key, r]) => {
+        const status = r.status === 'success' ? 'success' : r.status === 'error' ? 'error' : 'warning'
+        items.push({ key, result: r, status })
+      })
+    }
+    return (
+      <div style={{ marginTop: 16 }}>
+        <Alert type={files_processed > 0 ? 'success' : 'warning'} showIcon 
+          message={`${msg || '导入完成'} - 处理 ${files_processed || 0} 个文件`}
+          style={{ marginBottom: 8 }} />
+        {skipped && skipped.length > 0 && (
+          <Alert type="warning" showIcon style={{ marginBottom: 8 }}
+            message={`跳过 ${skipped.length} 个文件：${skipped.map(s => s.file).join(', ')}`} />
+        )}
+        {items.length > 0 && (
+          <Collapse size="small" items={[{
+            key: 'details', label: `明细 (${items.length} 项)`,
+            children: items.map(({ key, result: r, status }) => (
+              <div key={key} style={{ marginBottom: 4, display: 'flex', gap: 8 }}>
+                <Tag color={status === 'success' ? 'green' : status === 'error' ? 'red' : 'orange'}>
+                  {status === 'success' ? '成功' : status === 'error' ? '失败' : '跳过'}
+                </Tag>
+                <span>{key}</span>
+                {r.type && <Tag>{r.type}</Tag>}
+                {r.rows && <span style={{color:'#999',fontSize:12}}>{r.rows}行</span>}
+                {r.error && <span style={{color:'red',fontSize:12}}>{r.error}</span>}
+              </div>
+            ))
+          }]} />
+        )}
+      </div>
+    )
+  }
+
   // 构建 Tabs items
   const tabItems = [
+    {
+      key: 'folder',
+      label: <span>📂 文件夹批量导入</span>,
+      children: (
+        <div>
+          <Alert
+            message="选择文件夹（如 04/），系统自动从文件名解析店铺和月份（如 LMG-EU_04.xlsx → LMG-EU 04月）"
+            type="info" showIcon style={{ marginBottom: 12 }} />
+          <div style={{ marginBottom: 12, display: 'flex', gap: 16, alignItems: 'center' }}>
+            <span style={{ fontWeight: 500 }}>导入年份：</span>
+            <Select style={{ width: 100 }} value={folderYear} onChange={setFolderYear}
+              options={[{value:2025,label:'2025年'},{value:2026,label:'2026年'}]} />
+            <span style={{ color: '#999', fontSize: 12 }}>月份从文件名自动解析（_04 → 4月）</span>
+          </div>
+          <input
+            type="file"
+            webkitdirectory=""
+            directory=""
+            multiple
+            accept=".xlsx,.csv"
+            style={{ display: 'none' }}
+            id="folder-input"
+            onChange={async (e) => {
+              const fileList = Array.from(e.target.files || [])
+              if (fileList.length === 0) return
+              handleFolderUpload({ fileList: fileList.map(f => ({ originFileObj: f })), onSuccess: () => {}, onError: () => {} })
+              e.target.value = ''
+            }}
+          />
+          <div
+            onClick={() => document.getElementById('folder-input').click()}
+            style={{
+              border: '2px dashed #d9d9d9', borderRadius: 8, padding: '40px 24px',
+              textAlign: 'center', cursor: folderUploading ? 'not-allowed' : 'pointer',
+              background: folderUploading ? '#f5f5f5' : '#fafafa',
+              opacity: folderUploading ? 0.6 : 1
+            }}
+          >
+            <p style={{ fontSize: 48, color: '#1677ff', margin: '0 0 8px 0' }}>📂</p>
+            <p style={{ fontSize: 16, margin: 0 }}>
+              {folderUploading ? '正在导入...' : '点击选择文件夹'}
+            </p>
+            <p style={{ color: '#999', marginTop: 4 }}>
+              文件命名格式：{'店铺代码_月份.xlsx'}，如 MGT-EU_04.xlsx
+            </p>
+          </div>
+          {renderFolderResult()}
+        </div>
+      ),
+    },
     {
       key: 'workbook',
       label: <span>📋 一键导入工作簿</span>,

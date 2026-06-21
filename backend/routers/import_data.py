@@ -1907,7 +1907,7 @@ async def import_workbook(
             return {"detail": f"店铺 {store} 不存在，请先在系统管理创建"}
 
         # 清空该店铺+导入月份的数据（用 time_id 匹配，避免跨月误删）
-        from sqlalchemy import extract, text as _text
+        from sqlalchemy import extract, text as _text, func as _func
         _clear_filters = [RawTransaction.store_id == store_obj.id]
         if import_year and import_month:
             _clear_time = db.query(DimTime).filter(DimTime.time_year == import_year, DimTime.time_month == import_month).first()
@@ -1915,14 +1915,22 @@ async def import_workbook(
                 _clear_filters.append(RawTransaction.time_id == _clear_time.id)
         db.query(RawTransaction).filter(*_clear_filters).delete()
 
-        # RawAdvertising 无日期字段，按店铺+国家清空（广告数据按月独立文件，重导入即可）
+        # RawAdvertising 无日期字段，按店铺全量清空
         db.query(RawAdvertising).filter(RawAdvertising.store_id == store_obj.id).delete()
 
-        # 仓储费/退货/入库/长期仓储费：按店铺全量清空（这些是快照数据，每次导入应完全替换）
-        db.query(RawStorageFee).filter(RawStorageFee.store_id == store_obj.id).delete()
-        db.query(RawReturns).filter(RawReturns.store_id == store_obj.id).delete()
-        db.query(RawInbound).filter(RawInbound.store_id == store_obj.id).delete()
-        db.query(RawLongTermStorage).filter(RawLongTermStorage.store_id == store_obj.id).delete()
+        # 仓储费/退货/入库/长期仓储费：按店铺+月份清空（不跨月）
+        if import_year and import_month:
+            _fee_month_prefix = f"{import_year}-{import_month:02d}"
+            db.query(RawStorageFee).filter(RawStorageFee.store_id == store_obj.id, RawStorageFee.month_of_charge.like(f"{_fee_month_prefix}%")).delete()
+            db.query(RawReturns).filter(RawReturns.store_id == store_obj.id, RawReturns.month_of_charge.like(f"{_fee_month_prefix}%")).delete()
+            db.query(RawInbound).filter(RawInbound.store_id == store_obj.id, _func.date_format(RawInbound.transaction_date, '%Y-%m') == _fee_month_prefix).delete()
+            # 长期仓储费没有明确的月份字段，按店铺全量清空
+            db.query(RawLongTermStorage).filter(RawLongTermStorage.store_id == store_obj.id).delete()
+        else:
+            db.query(RawStorageFee).filter(RawStorageFee.store_id == store_obj.id).delete()
+            db.query(RawReturns).filter(RawReturns.store_id == store_obj.id).delete()
+            db.query(RawInbound).filter(RawInbound.store_id == store_obj.id).delete()
+            db.query(RawLongTermStorage).filter(RawLongTermStorage.store_id == store_obj.id).delete()
 
         # MonthlySummary：按店铺+月份清空
         if import_year and import_month:
@@ -2273,7 +2281,7 @@ async def import_folder(
                              'date/heure', 'data/ora', 'data/ora:', 'datum/tijd', 'datum/tid')
 
         # 按店铺+月份分组，每组清空一次数据
-        from sqlalchemy import extract, text as _text
+        from sqlalchemy import extract, text as _text, func as _func
         processed_keys = set()  # (store_id, year, month)
 
         for upload_file, store_obj, month_int, fname in file_plan:
@@ -2289,10 +2297,13 @@ async def import_folder(
                 if _clear_time:
                     _clear_filters.append(RawTransaction.time_id == _clear_time.id)
                 db.query(RawTransaction).filter(*_clear_filters).delete()
+                # RawAdvertising 无日期字段，按店铺全量清空
                 db.query(RawAdvertising).filter(RawAdvertising.store_id == store_obj.id).delete()
-                db.query(RawStorageFee).filter(RawStorageFee.store_id == store_obj.id).delete()
-                db.query(RawReturns).filter(RawReturns.store_id == store_obj.id).delete()
-                db.query(RawInbound).filter(RawInbound.store_id == store_obj.id).delete()
+                # 仓储/退货/入库/长期仓储费：按店铺+月份清空
+                _fee_month_prefix = f"{import_year_val}-{import_month:02d}"
+                db.query(RawStorageFee).filter(RawStorageFee.store_id == store_obj.id, RawStorageFee.month_of_charge.like(f"{_fee_month_prefix}%")).delete()
+                db.query(RawReturns).filter(RawReturns.store_id == store_obj.id, RawReturns.month_of_charge.like(f"{_fee_month_prefix}%")).delete()
+                db.query(RawInbound).filter(RawInbound.store_id == store_obj.id, _func.date_format(RawInbound.transaction_date, '%Y-%m') == _fee_month_prefix).delete()
                 db.query(RawLongTermStorage).filter(RawLongTermStorage.store_id == store_obj.id).delete()
 
                 _time_obj = db.query(DimTime).filter(DimTime.time_year == import_year_val, DimTime.time_month == import_month).first()

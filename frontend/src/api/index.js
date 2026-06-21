@@ -54,6 +54,17 @@ export const uploadFile = (type, file, country, store, year, month) => {
   })
 }
 
+// 文件夹批量导入
+export const uploadFolder = (files, year) => {
+  const formData = new FormData()
+  files.forEach(f => formData.append('files', f))
+  formData.append('import_year', year)
+  return api.post('/import/folder', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 300000
+  })
+}
+
 // 一键导入工作簿
 export const uploadWorkbook = (file, country = 'auto', store, year, month) => {
   const formData = new FormData()
