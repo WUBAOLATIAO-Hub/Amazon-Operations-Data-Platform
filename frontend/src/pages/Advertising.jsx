@@ -3,19 +3,20 @@ import { Row, Col, Select, Card, Table, Statistic, Spin, message } from 'antd'
 import { AimOutlined, LineChartOutlined } from '@ant-design/icons'
 import { getAdvertisingSummary, getAdvertisingDetail, getStores, getCountries } from '../api'
 
-// 最近24个月选项
-function generateMonthOptions() {
-  const options = []
-  const now = new Date()
-  for (let i = 0; i < 24; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-    const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-    options.push({ value: val, label: `${d.getFullYear()}年${d.getMonth() + 1}月` })
-  }
-  return options
-}
-
-const MONTH_OPTIONS = generateMonthOptions()
+// 年份选项
+const YEAR_OPTIONS = [
+  { value: 0, label: '全部' },
+  { value: 2025, label: '2025年' },
+  { value: 2026, label: '2026年' },
+  { value: 2027, label: '2027年' },
+  { value: 2028, label: '2028年' },
+  { value: 2029, label: '2029年' },
+  { value: 2030, label: '2030年' },
+]
+const MONTH_OPTIONS = [
+  { value: 0, label: '全部' },
+  ...Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: `${i + 1}月` })),
+]
 
 /** 格式化金额 */
 function formatMoney(num, decimals = 2) {
@@ -40,7 +41,8 @@ export default function Advertising() {
   const [store, setStore] = useState('')
   const [storeOptions, setStoreOptions] = useState([])
   const [countryOptions, setCountryOptions] = useState([])
-  const [month, setMonth] = useState('2026-05')
+  const [adYear, setAdYear] = useState(2026)
+  const [adMonth, setAdMonth] = useState(5)
 
   const [loading, setLoading] = useState(false)
   const [summary, setSummary] = useState(null)
@@ -61,7 +63,9 @@ export default function Advertising() {
   // 获取汇总数据
   const fetchSummary = useCallback(async () => {
     try {
-      const params = { country, year_month: month }
+      const params = { country }
+      if (adYear) params.year = adYear
+      if (adMonth) params.month = adMonth
       if (store) params.store = store
       const res = await getAdvertisingSummary(params)
       setSummary(res.data)
@@ -76,7 +80,8 @@ export default function Advertising() {
     try {
       const params = {
         country,
-        year_month: month,
+        year: adYear,
+        month: adMonth,
         page,
         page_size: pageSize,
       }
@@ -99,7 +104,7 @@ export default function Advertising() {
     } finally {
       setLoading(false)
     }
-  }, [country, store, month])
+  }, [country, store, adYear, adMonth])
 
   // 初始加载 & 筛选变化时加载
   useEffect(() => {
@@ -247,7 +252,8 @@ export default function Advertising() {
         <Select style={{ width: 160 }} value={store} onChange={setStore} options={storeOptions} placeholder="全部店铺" />
         <Select style={{ width: 140 }} value={country} onChange={setCountry}
           options={countryOptions} placeholder="全部国家" />
-        <Select style={{ width: 160 }} value={month} onChange={setMonth} options={MONTH_OPTIONS} placeholder="选择月份" />
+        <Select style={{ width: 110 }} value={adYear} onChange={setAdYear} options={YEAR_OPTIONS} />
+        <Select style={{ width: 90 }} value={adMonth} onChange={setAdMonth} options={MONTH_OPTIONS} />
       </div>
 
       {/* 汇总卡片 */}

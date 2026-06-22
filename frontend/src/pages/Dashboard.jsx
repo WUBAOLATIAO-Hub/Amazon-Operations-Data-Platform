@@ -13,12 +13,16 @@ import * as echarts from 'echarts'
 import StatCard from '../components/StatCard'
 import { getDashboardSummary, getDashboardTrend, getProductDistribution, getCostBreakdown, getTopReturns, getStoreComparison, getCountryComparison, getTransferSummary, getStores, getCountries } from '../api'
 
-// 年份选项（最近5年）
-const currentYear = new Date().getFullYear()
-const YEAR_OPTIONS = Array.from({ length: 5 }, (_, i) => ({
-  value: currentYear - i,
-  label: `${currentYear - i}年`,
-}))
+// 年份选项
+const YEAR_OPTIONS = [
+  { value: 0, label: '全部' },
+  { value: 2025, label: '2025年' },
+  { value: 2026, label: '2026年' },
+  { value: 2027, label: '2027年' },
+  { value: 2028, label: '2028年' },
+  { value: 2029, label: '2029年' },
+  { value: 2030, label: '2030年' },
+]
 
 // 月份选项
 const MONTH_OPTIONS = [
@@ -44,8 +48,8 @@ function formatPercent(num) {
 export default function Dashboard() {
   // 筛选状态
   const [country, setCountry] = useState('')
-  const [year, setYear] = useState(currentYear)
-  const [month, setMonth] = useState(new Date().getMonth() + 1)  // 默认当前月
+  const [year, setYear] = useState(2026)
+  const [month, setMonth] = useState(0)  // 默认全年
   const [store, setStore] = useState('')
   const [storeOptions, setStoreOptions] = useState([])
   const [countryOptions, setCountryOptions] = useState([{ value: '', label: '全部国家' }])

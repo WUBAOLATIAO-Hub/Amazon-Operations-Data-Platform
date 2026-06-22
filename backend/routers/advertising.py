@@ -11,7 +11,8 @@ router = APIRouter()
 def get_ad_summary(
     country: str = Query(None, description="国家代码"),
     store: str = Query(None, description="店铺代码"),
-    year_month: str = Query(None, description="年月，如 2026-05"),
+    year: int = Query(None, description="年份"),
+    month: int = Query(None, description="月份"),
     db: Session = Depends(get_db),
 ):
     try:
@@ -25,10 +26,12 @@ def get_ad_summary(
             q = q.join(DimCountry, MonthlySummary.country_id == DimCountry.id).filter(
                 DimCountry.code == country.upper()
             )
-        if year_month:
-            q = q.join(DimTime, MonthlySummary.time_id == DimTime.id).filter(
-                DimTime.year_month == year_month
-            )
+        if year or month:
+            q = q.join(DimTime, MonthlySummary.time_id == DimTime.id)
+            if year:
+                q = q.filter(DimTime.time_year == year)
+            if month:
+                q = q.filter(DimTime.time_month == month)
         if store:
             q = q.join(DimStore, MonthlySummary.store_id == DimStore.id).filter(DimStore.code == store)
 
@@ -55,7 +58,8 @@ def get_ad_summary(
 def get_ad_detail(
     country: str = Query(None, description="国家代码"),
     store: str = Query(None, description="店铺代码"),
-    year_month: str = Query(None, description="年月"),
+    year: int = Query(None, description="年份"),
+    month: int = Query(None, description="月份"),
     sort_by: str = Query("ad_spend", description="排序字段"),
     sort_order: str = Query("desc", description="排序方向: asc/desc"),
     page: int = Query(1, ge=1, description="页码"),
@@ -82,10 +86,12 @@ def get_ad_detail(
             q = q.join(DimCountry, MonthlySummary.country_id == DimCountry.id).filter(
                 DimCountry.code == country.upper()
             )
-        if year_month:
-            q = q.join(DimTime, MonthlySummary.time_id == DimTime.id).filter(
-                DimTime.year_month == year_month
-            )
+        if year or month:
+            q = q.join(DimTime, MonthlySummary.time_id == DimTime.id)
+            if year:
+                q = q.filter(DimTime.time_year == year)
+            if month:
+                q = q.filter(DimTime.time_month == month)
         if store:
             q = q.join(DimStore, MonthlySummary.store_id == DimStore.id).filter(DimStore.code == store)
 

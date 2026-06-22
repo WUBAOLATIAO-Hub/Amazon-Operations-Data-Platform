@@ -134,7 +134,7 @@ function RateManager() {
           options={stores.map(s=>({value:s.name,label:s.name}))}/>
         <span style={{marginLeft:16}}>年月</span>
         <Select style={{width:100}} value={selectedYear} onChange={setSelectedYear}
-          options={[{value:'2025',label:'2025'},{value:'2026',label:'2026'}]}/>
+          options={[2025,2026,2027,2028,2029,2030].map(y=>({value:String(y),label:String(y)}))}/>
         <Select style={{width:90}} value={selectedMonth} onChange={setSelectedMonth}
           options={Array.from({length:12},(_,i)=>({value:i+1,label:`${i+1}月`}))}/>
       </div>

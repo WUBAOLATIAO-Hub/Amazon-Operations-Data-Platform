@@ -5,8 +5,12 @@ import { getMonthlySummary, getCountrySummary, getStores, getCountries, exportMo
 
 const YEAR_OPTIONS = [
   { value: 0, label: '全部' },
-  { value: 2026, label: '2026年' },
   { value: 2025, label: '2025年' },
+  { value: 2026, label: '2026年' },
+  { value: 2027, label: '2027年' },
+  { value: 2028, label: '2028年' },
+  { value: 2029, label: '2029年' },
+  { value: 2030, label: '2030年' },
 ]
 
 const MONTH_OPTIONS = [

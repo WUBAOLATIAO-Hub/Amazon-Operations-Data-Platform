@@ -830,10 +830,10 @@ async def import_transaction(
                     # 无order_id
                     if total > 0:
                         adj_aggregation[adj_key]["total_no_order_pos"] += total
-                        adj_aggregation[adj_key]["qty"] += 1
+                        adj_aggregation[adj_key]["qty"] += abs(quantity)
                     elif total < 0:
                         adj_aggregation[adj_key]["total_no_order_neg"] += total
-                        adj_aggregation[adj_key]["qty"] -= 1
+                        adj_aggregation[adj_key]["qty"] -= abs(quantity)
                 continue
 
             # 仅 Order/Refund 参与 monthly_summary 聚合
@@ -2759,10 +2759,10 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
             else:
                 if total > 0:
                     adj_aggregation3[adj_key]["total_no_order_pos"] += total
-                    adj_aggregation3[adj_key]["qty"] += 1
+                    adj_aggregation3[adj_key]["qty"] += quantity
                 elif total < 0:
                     adj_aggregation3[adj_key]["total_no_order_neg"] += total
-                    adj_aggregation3[adj_key]["qty"] -= 1
+                    adj_aggregation3[adj_key]["qty"] -= abs(quantity)
             continue
 
         # 仅 Order/Refund 参与 monthly_summary 聚合
@@ -3685,16 +3685,22 @@ def _recalculate_all_profit(db, country_obj):
         UPDATE monthly_summary ms
         JOIN dim_product dp ON dp.id = ms.product_id
         SET ms.order_qty = (
-            SELECT COALESCE(SUM(ABS(rt.quantity)), 0)
+            SELECT COALESCE(SUM(
+                CASE 
+                    WHEN rt.transaction_type = 'Order' THEN ABS(rt.quantity)
+                    WHEN rt.transaction_type = 'Adjustment' AND rt.total > 0 AND (rt.order_id IS NULL OR rt.order_id = '') THEN ABS(rt.quantity)
+                    WHEN rt.transaction_type = 'Adjustment' AND rt.total < 0 AND (rt.order_id IS NULL OR rt.order_id = '') THEN -ABS(rt.quantity)
+                    ELSE 0
+                END
+            ), 0)
             FROM raw_transactions rt
-            WHERE rt.transaction_type = 'Order'
+            WHERE rt.transaction_type IN ('Order', 'Adjustment')
               AND rt.country_id = :country_id
               AND rt.sku = dp.sku
               AND rt.time_id = ms.time_id
               AND (rt.store_id = ms.store_id OR (rt.store_id IS NULL AND ms.store_id IS NULL))
         )
         WHERE ms.country_id = :country_id
-          AND (ms.order_qty IS NULL OR ms.order_qty = 0)
     """), {"country_id": country_obj.id})
 
     # Step 2: 批量预加载所有维度数据到内存（消除N+1）
@@ -3870,6 +3876,9 @@ def _recalculate_all_profit(db, country_obj):
         summary.amazon_payout_usd = (
             raw_ps + summary.commission_usd + summary.fba_fee_usd
         ).quantize(Decimal("0.01"))
+        # Adjustment 在清零后需重新赋值
+        adj_val = ra.get("adj_no_order", Decimal("0"))
+        summary.adjustment_usd = adj_val
 
         # 统一利润公式
         from services.profit import apply_profit_to_summary

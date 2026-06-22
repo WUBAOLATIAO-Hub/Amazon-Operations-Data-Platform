@@ -471,7 +471,7 @@ export default function DataImport() {
           <div style={{ marginBottom: 12, display: 'flex', gap: 16, alignItems: 'center' }}>
             <span style={{ fontWeight: 500 }}>导入年份：</span>
             <Select style={{ width: 100 }} value={folderYear} onChange={setFolderYear}
-              options={[{value:2025,label:'2025年'},{value:2026,label:'2026年'}]} />
+              options={[2025,2026,2027,2028,2029,2030].map(y=>({value:y,label:y+'年'}))} />
             <span style={{ color: '#999', fontSize: 12 }}>月份从文件名自动解析（_04 → 4月）</span>
           </div>
           <input
@@ -569,7 +569,7 @@ export default function DataImport() {
         <Select style={{ width: 180 }} value={store || undefined} onChange={setStore} options={storeOptions} placeholder="选择店铺" />
         <span style={{ fontWeight: 500 }}>导入月份：</span>
         <Select style={{ width: 100 }} value={importYear} onChange={setImportYear}
-          options={[{value:2025,label:'2025年'},{value:2026,label:'2026年'}]} />
+          options={[2025,2026,2027,2028,2029,2030].map(y=>({value:y,label:y+'年'}))} />
         <Select style={{ width: 80 }} value={importMonth} onChange={setImportMonth}
           options={Array.from({length:12},(_,i)=>({value:i+1,label:`${i+1}月`}))} />
       </div>
