@@ -2,7 +2,7 @@ import axios from 'axios'
 
 const api = axios.create({
   baseURL: '/api',
-  timeout: 30000,
+  timeout: 600000,
 })
 
 // 请求拦截：自动带上 token
@@ -61,7 +61,7 @@ export const uploadFolder = (files, year) => {
   formData.append('import_year', year)
   return api.post('/import/folder', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 300000
+    timeout: 600000
   })
 }
 
@@ -75,7 +75,7 @@ export const uploadWorkbook = (file, country = 'auto', store, year, month) => {
   if (month) formData.append('import_month', month)
   return api.post('/import/workbook', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 120000
+    timeout: 600000
   })
 }
 

@@ -11,6 +11,7 @@ import {
   UserOutlined,
 } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
+import FloatingAI from './FloatingAI'
 
 const { Sider, Content, Header } = AntLayout
 
@@ -119,6 +120,7 @@ export default function Layout() {
           <Outlet />
         </Content>
       </AntLayout>
+      <FloatingAI />
     </AntLayout>
   )
 }

@@ -163,13 +163,25 @@ def _get_or_create_product(db: Session, asin: str, sku: str = None, store_id: in
     asin = asin.strip() if asin else ""
     if not asin or asin.startswith("Amazon.") or asin.startswith("amzn.gr."):
         return None
+    # 校验ASIN格式：真实Amazon ASIN为10位B0开头，防止sku.split('-')[0]误入
+    import re as _re
+    if not _re.match(r'^B0[A-Z0-9]{8}$', asin):
+        # ASIN不合法，尝试通过SKU在已有产品中查找真实ASIN
+        if sku and store_id and year_month:
+            existing = db.query(DimProduct).filter(
+                DimProduct.sku == sku, DimProduct.store_id == store_id,
+                DimProduct.asin.op('REGEXP')(r'^B0[A-Z0-9]{8}$')
+            ).first()
+            if existing:
+                return existing
+        return None
 
     product = None
-    if store_id and year_month:
+    if store_id:
+        # 按 ASIN+店铺查找（同ASIN同店铺不跨月分拆）
         product = db.query(DimProduct).filter(
             DimProduct.asin == asin,
             DimProduct.store_id == store_id,
-            DimProduct.year_month == year_month,
         ).first()
 
     if not product:
@@ -231,20 +243,14 @@ def _get_exchange_rate(db: Session, country_obj, import_year=None, import_month=
 
 
 def _find_product_by_sku(db: Session, sku: str, store_id: int = None, year_month: str = None) -> DimProduct:
-    """通过 SKU 查找产品（严格按店铺+月份匹配，不回退全局）
-
-    查找逻辑：
-    1. (store_id, year_month, sku) 精确匹配，ASIN以B0开头
-    2. (store_id, year_month, sku) 精确匹配，任意ASIN
-    """
+    """通过 SKU 查找产品（按店铺匹配，不回退全局；year_month仅作兼容保留）"""
     if not sku:
         return None
 
-    if store_id and year_month:
+    if store_id:
         product = db.query(DimProduct).filter(
             DimProduct.sku == sku,
             DimProduct.store_id == store_id,
-            DimProduct.year_month == year_month,
             DimProduct.asin.like("B0%")
         ).first()
         if product:
@@ -252,21 +258,19 @@ def _find_product_by_sku(db: Session, sku: str, store_id: int = None, year_month
         return db.query(DimProduct).filter(
             DimProduct.sku == sku,
             DimProduct.store_id == store_id,
-            DimProduct.year_month == year_month,
         ).first()
 
     return None
 
 
 def _find_product_by_asin(db: Session, asin: str, store_id: int = None, year_month: str = None) -> DimProduct:
-    """通过 ASIN 查找产品（严格按店铺+月份匹配）"""
+    """通过 ASIN 查找产品（按店铺匹配；year_month仅作兼容保留）"""
     if not asin:
         return None
-    if store_id and year_month:
+    if store_id:
         return db.query(DimProduct).filter(
             DimProduct.asin == asin,
             DimProduct.store_id == store_id,
-            DimProduct.year_month == year_month,
         ).first()
     return None
 
@@ -406,21 +410,33 @@ def _detect_date_format(date_str: str):
         'maj': 'May', 'augusti': 'August',
         'gen': 'Jan', 'feb': 'Feb', 'mag': 'May', 'giu': 'Jun',
         'lug': 'Jul', 'ago': 'Aug', 'set': 'Sep', 'ott': 'Oct', 'dic': 'Dec',
+        # Swedish months (full + abbreviated)
+        'januari': 'January', 'februari': 'February', 'mars': 'March',
+        'april': 'April', 'maj': 'May', 'juni': 'June', 'juli': 'July',
+        'augusti': 'August', 'oktober': 'October',
+        'apr.': 'April', 'apr': 'April',
     }
     lower = date_str_clean.lower()
     for local, eng in _month_map.items():
         if local in lower:
-            date_str_clean = date_str_clean.replace(local, eng)
-            date_str_clean = date_str_clean.replace(local.capitalize(), eng)
+            # 用正则替换完整单词（避免 apr→April 后又把 April 里的 Apr 再替换）
+            if local.endswith('.'):
+                # 带点号的（如 apr.）用简单替换
+                date_str_clean = re.sub(re.escape(local), eng, date_str_clean, flags=re.IGNORECASE)
+            else:
+                date_str_clean = re.sub(r'\b' + re.escape(local) + r'\b', eng, date_str_clean, flags=re.IGNORECASE)
             break
     formats = [
         "%d %b %Y %I:%M:%S %p",    # 5 may 2026 5:08:09 AM (MX无逗号格式)
         "%d %B %Y %I:%M:%S %p",    # 2 mai 2026 03:04:42 AM (French full month)
         "%d %b %Y %H:%M:%S",       # 9 maj 2026 03:41:35 (Swedish)
         "%d %B %Y %H:%M:%S",       # 9 maj 2026 03:41:35 (Swedish full)
-        "%b %d, %Y %I:%M:%S %p",   # May 1, 2026 5:46:45 AM
+        "%b %d, %Y %I:%M:%S %p",   # May 1, 2026 5:46:45 AM (abbreviated)
+        "%B %d, %Y %I:%M:%S %p",   # April 1, 2026 6:50:23 AM (full month, after apr→April)
         "%b %d, %Y %I:%M %p",
+        "%B %d, %Y %I:%M %p",
         "%b %d, %Y",
+        "%B %d, %Y",
         "%d.%m.%Y %H:%M:%S",       # 01.05.2026 10:05:35 (German)
         "%d.%m.%Y",                 # 01.05.2026 (German date only)
         "%m/%d/%Y %H:%M:%S",
@@ -1102,13 +1118,12 @@ async def import_product_info(
             exchange_rate = _safe_decimal(row[col_map["汇率"]]) if "汇率" in col_map else None
             time_val = str(row[col_map["时间"]]).strip() if "时间" in col_map and row[col_map["时间"]] else None
 
-            # 按店铺+月份严格查找（不回退全局）
+            # 按店铺查找（同ASIN同店铺不跨月分拆）
             product = None
-            if store_obj and ym:
+            if store_obj:
                 product = db.query(DimProduct).filter(
                     DimProduct.asin == asin,
                     DimProduct.store_id == store_obj.id,
-                    DimProduct.year_month == ym,
                 ).first()
 
             if not product:
@@ -2182,9 +2197,12 @@ async def import_workbook(
             except Exception as e:
                 results[sheet_name] = {"status": "error", "type": stype, "country": cc or "multi", "detail": str(e)}
 
-        # ===== 统一重算利润（一次性提交）=====
+        # ===== 重算利润——只重算当前店铺的已导入月份 =====
+        _time_obj_for_rec = None
+        if import_year and import_month:
+            _time_obj_for_rec = db.query(DimTime).filter(DimTime.time_year == import_year, DimTime.time_month == import_month).first()
         for cc, co in country_objs.items():
-            _recalculate_all_profit(db, co)
+            _recalculate_all_profit(db, co, store_id=store_obj.id, time_id=_time_obj_for_rec.id if _time_obj_for_rec else None)
         db.commit()
 
         # ===== 导入后验证：按国家汇总数据 =====
@@ -2418,9 +2436,12 @@ async def import_folder(
             for co in db.query(DimCountry).all():
                 _ensure_all_products_have_summary(db, co, store_id=store_id, import_year=yr, import_month=mo)
 
-        countries = db.query(DimCountry).all()
-        for co in countries:
-            _recalculate_all_profit(db, co)
+        # 重算利润——只算本次导入的店铺+月份
+        for (store_id, yr, mo) in processed_keys:
+            _time_obj = db.query(DimTime).filter(DimTime.time_year == yr, DimTime.time_month == mo).first()
+            if _time_obj:
+                for co in db.query(DimCountry).all():
+                    _recalculate_all_profit(db, co, store_id=store_id, time_id=_time_obj.id)
         db.commit()
 
         # 汇总结果
@@ -3676,12 +3697,32 @@ def _process_removal_fee_sheet(db, country_obj, header, rows, store_id=None, imp
     return {"csv_rows": row_count, "summary_updated": summary_updated}
 
 
-def _recalculate_all_profit(db, country_obj):
-    """重新计算该国家所有 monthly_summary 的净利润（批量预加载，消除N+1查询）"""
+def _recalculate_all_profit(db, country_obj, store_id=None, time_id=None):
+    """重新计算 monthly_summary 的净利润（可按店铺+月份限制范围，批量预加载消除N+1查询）"""
     from sqlalchemy import text
 
-    # Step 1: SQL 补充 order_qty（用 time_id 匹配，不用日期字段）
-    db.execute(text("""
+    ms_filter = [MonthlySummary.country_id == country_obj.id]
+    rt_filter = ["rt.country_id = :cid"]
+    rt_params = {"cid": country_obj.id}
+    if store_id:
+        ms_filter.append(MonthlySummary.store_id == store_id)
+        rt_filter.append("rt.store_id = :sid")
+        rt_params["sid"] = store_id
+    if time_id:
+        ms_filter.append(MonthlySummary.time_id == time_id)
+        rt_filter.append("rt.time_id = :tid")
+        rt_params["tid"] = time_id
+
+    # Step 1: SQL 补充 order_qty
+    _step1_extra = ""
+    _step1_params = {"country_id": country_obj.id}
+    if store_id:
+        _step1_extra += " AND ms.store_id = :store_id"
+        _step1_params["store_id"] = store_id
+    if time_id:
+        _step1_extra += " AND ms.time_id = :time_id"
+        _step1_params["time_id"] = time_id
+    db.execute(text(f"""
         UPDATE monthly_summary ms
         JOIN dim_product dp ON dp.id = ms.product_id
         SET ms.order_qty = (
@@ -3700,14 +3741,21 @@ def _recalculate_all_profit(db, country_obj):
               AND rt.time_id = ms.time_id
               AND (rt.store_id = ms.store_id OR (rt.store_id IS NULL AND ms.store_id IS NULL))
         )
-        WHERE ms.country_id = :country_id
-    """), {"country_id": country_obj.id})
+        WHERE ms.country_id = :country_id{_step1_extra}
+    """), _step1_params)
 
-    # Step 2: 批量预加载所有维度数据到内存（消除N+1）
-    # 从 raw_transactions 按 (sku, time_id) 聚合亚马逊字段
-    raw_agg = {}  # (sku, time_id) -> {product_sales, product_sales_tax, postage_credits, ...}
+    # Step 2: 批量预加载 raw_transactions 数据
+    raw_agg = {}
     from sqlalchemy import text as _text
-    raw_rows = db.execute(_text("""
+    _raw_extra = ""
+    _raw_params = {"cid": country_obj.id}
+    if store_id:
+        _raw_extra += " AND rt.store_id = :sid"
+        _raw_params["sid"] = store_id
+    if time_id:
+        _raw_extra += " AND rt.time_id = :tid"
+        _raw_params["tid"] = time_id
+    raw_rows = db.execute(_text(f"""
         SELECT rt.sku, rt.time_id, rt.store_id,
                SUM(CASE WHEN rt.transaction_type IN ('Order', 'Refund') THEN rt.product_sales ELSE 0 END) as product_sales,
                SUM(CASE WHEN rt.transaction_type IN ('Order', 'Refund') THEN rt.product_sales_tax ELSE 0 END) as product_sales_tax,
@@ -3720,11 +3768,12 @@ def _recalculate_all_profit(db, country_obj):
                SUM(CASE WHEN rt.transaction_type IN ('Order', 'Refund') THEN rt.marketplace_withheld_tax ELSE 0 END) as marketplace_withheld_tax,
                SUM(CASE WHEN rt.transaction_type IN ('Order', 'Refund') THEN rt.selling_fee ELSE 0 END) as selling_fee,
                SUM(CASE WHEN rt.transaction_type IN ('Order', 'Refund') THEN rt.fba_fee ELSE 0 END) as fba_fee,
-               SUM(CASE WHEN rt.transaction_type = 'Adjustment' THEN rt.total ELSE 0 END) as adj_total
+               SUM(CASE WHEN rt.transaction_type = 'Adjustment' THEN rt.total ELSE 0 END) as adj_total,
+               COUNT(CASE WHEN rt.transaction_type = 'Order' THEN 1 END) as order_cnt
         FROM raw_transactions rt
-        WHERE rt.country_id = :cid
+        WHERE rt.country_id = :cid{_raw_extra}
         GROUP BY rt.sku, rt.time_id, rt.store_id
-    """), {"cid": country_obj.id}).fetchall()
+    """), _raw_params).fetchall()
 
     for row in raw_rows:
         sku = row[0] or ""
@@ -3744,6 +3793,7 @@ def _recalculate_all_profit(db, country_obj):
                 "marketplace_withheld_tax": Decimal("0"),
                 "selling_fee": Decimal("0"), "fba_fee": Decimal("0"),
                 "adj_no_order": Decimal("0"),
+                "order_cnt": 0,
             }
         agg = raw_agg[key]
         agg["product_sales"] += Decimal(str(row[3] or 0))
@@ -3758,6 +3808,7 @@ def _recalculate_all_profit(db, country_obj):
         agg["selling_fee"] += Decimal(str(row[12] or 0))
         agg["fba_fee"] += Decimal(str(row[13] or 0))
         agg["adj_no_order"] += Decimal(str(row[14] or 0))
+        agg["order_cnt"] += int(row[15] or 0)
 
     # 产品表: id -> (asin, sku)
     product_map = {}
@@ -3788,8 +3839,13 @@ def _recalculate_all_profit(db, country_obj):
         rate_map[(er.store_id, er.year_month)] = Decimal(str(er.rate))
     default_rate = Decimal(_get_exchange_rate(db, country_obj).__str__())
 
-    # Step 3: 重算所有 summary
-    summaries = db.query(MonthlySummary).filter(MonthlySummary.country_id == country_obj.id).all()
+    # Step 3: 重算 summary（限定范围）
+    _summary_q = db.query(MonthlySummary).filter(MonthlySummary.country_id == country_obj.id)
+    if store_id:
+        _summary_q = _summary_q.filter(MonthlySummary.store_id == store_id)
+    if time_id:
+        _summary_q = _summary_q.filter(MonthlySummary.time_id == time_id)
+    summaries = _summary_q.all()
 
     processed_sku_keys = set()  # (sku, time_id, store_id) 去重：同 SKU 只算一次
     for summary in summaries:
@@ -3858,6 +3914,10 @@ def _recalculate_all_profit(db, country_obj):
         sku = product.sku if product else None
         raw_key = (sku, summary.time_id, summary.store_id) if sku else None
         ra = raw_agg.get(raw_key, {}) if raw_key else {}
+
+        # 从 raw 数据更新 order_count
+        if ra:
+            summary.order_count = ra.get("order_cnt", 0)
 
         raw_ps = ra.get("product_sales", Decimal(str(summary.product_sales_usd or 0)))
         summary.product_sales_usd = raw_ps

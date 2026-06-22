@@ -72,7 +72,7 @@ export default function Advertising() {
     } catch (err) {
       message.error('获取广告汇总失败：' + (err.response?.data?.detail || err.message))
     }
-  }, [country, store, month])
+  }, [country, store, adYear, adMonth])
 
   // 获取明细数据
   const fetchDetail = useCallback(async (page = 1, pageSize = 20, sortField, sortOrder) => {

@@ -233,8 +233,9 @@ export default function DataQuery() {
     { title: '产品名称', dataIndex: 'product_name', key: 'product_name', width: 180, fixed: 'left', ellipsis: true, sorter: true },
     { title: 'ASIN', dataIndex: 'asin', key: 'asin', width: 130, ellipsis: true },
     { title: '颜色', dataIndex: 'color', key: 'color', width: 70, render: v => v || '-' },
-    { title: '销量', dataIndex: 'order_count', key: 'order_count', width: 70, align: 'right', sorter: true, render: v => <strong>{v}</strong> },
-    { title: '单价(¥)', dataIndex: 'cost_rmb', key: 'cost_rmb', width: 90, align: 'right', render: v => fmtMoney(v) },
+    { title: '销量', dataIndex: 'order_count', key: 'order_count', width: 60, align: 'right', sorter: true, render: v => <strong>{v}</strong> },
+    { title: '退款', dataIndex: 'refund_qty', key: 'refund_qty', width: 50, align: 'right', render: v => v > 0 ? <span style={{ color: '#cf1322' }}>{v}</span> : '-' },
+    { title: '单价(¥)', dataIndex: 'cost_rmb', key: 'cost_rmb', width: 80, align: 'right', render: v => fmtMoney(v) },
     { title: '运费/台(¥)', dataIndex: 'freight_per_unit', key: 'freight_per_unit', width: 100, align: 'right', render: v => fmtMoney(v) },
     { title: '销售额(¥)', dataIndex: 'product_sales_rmb', key: 'product_sales_rmb', width: 110, align: 'right', sorter: true, render: v => fmtMoney(v) },
     { title: '采购成本(¥)', dataIndex: 'product_cost_rmb', key: 'product_cost_rmb', width: 110, align: 'right', render: v => fmtMoney(v) },
@@ -245,7 +246,7 @@ export default function DataQuery() {
 
   // 产品明细表列 - 完整模式
   const fullColumns = [
-    ...compactColumns.slice(0, 4),
+    ...compactColumns.slice(0, 5),
     { title: '单价(¥)', dataIndex: 'cost_rmb', key: 'cost_rmb', width: 90, align: 'right', render: v => fmtMoney(v) },
     { title: '运费/台(¥)', dataIndex: 'freight_per_unit', key: 'freight_per_unit', width: 100, align: 'right', render: v => fmtMoney(v) },
     { title: '销售额($)', dataIndex: 'product_sales_usd', key: 'product_sales_usd', width: 110, align: 'right', sorter: true, render: v => fmtMoney(v) },
@@ -388,11 +389,12 @@ export default function DataQuery() {
                       <Table.Summary.Cell index={3} align="right">{t.order_count}</Table.Summary.Cell>
                       <Table.Summary.Cell index={4}>-</Table.Summary.Cell>
                       <Table.Summary.Cell index={5}>-</Table.Summary.Cell>
-                      <Table.Summary.Cell index={6} align="right">{fmtMoney(t.product_sales_rmb)}</Table.Summary.Cell>
-                      <Table.Summary.Cell index={7} align="right">{fmtMoney(t.product_cost_rmb)}</Table.Summary.Cell>
-                      <Table.Summary.Cell index={8} align="right">{fmtMoney(t.freight_cost_rmb)}</Table.Summary.Cell>
-                      <Table.Summary.Cell index={9} align="right" style={{ color: t.net_profit_rmb >= 0 ? '#3f8600' : '#cf1322' }}>{fmtMoney(t.net_profit_rmb)}</Table.Summary.Cell>
-                      <Table.Summary.Cell index={10} align="right">{fmtRate(t.net_profit_rmb / t.product_sales_rmb * 100)}</Table.Summary.Cell>
+                      <Table.Summary.Cell index={6}>-</Table.Summary.Cell>
+                      <Table.Summary.Cell index={7} align="right">{fmtMoney(t.product_sales_rmb)}</Table.Summary.Cell>
+                      <Table.Summary.Cell index={8} align="right">{fmtMoney(t.product_cost_rmb)}</Table.Summary.Cell>
+                      <Table.Summary.Cell index={9} align="right">{fmtMoney(t.freight_cost_rmb)}</Table.Summary.Cell>
+                      <Table.Summary.Cell index={10} align="right" style={{ color: t.net_profit_rmb >= 0 ? '#3f8600' : '#cf1322' }}>{fmtMoney(t.net_profit_rmb)}</Table.Summary.Cell>
+                      <Table.Summary.Cell index={11} align="right">{fmtRate(t.net_profit_rmb / t.product_sales_rmb * 100)}</Table.Summary.Cell>
                     </>
                   ) : (
                     <>
@@ -401,16 +403,17 @@ export default function DataQuery() {
                       <Table.Summary.Cell index={3} align="right">{t.order_count}</Table.Summary.Cell>
                       <Table.Summary.Cell index={4}>-</Table.Summary.Cell>
                       <Table.Summary.Cell index={5}>-</Table.Summary.Cell>
-                      <Table.Summary.Cell index={6} align="right">{fmtMoney(t.product_sales_usd)}</Table.Summary.Cell>
-                      <Table.Summary.Cell index={7} align="right">{fmtMoney(t.product_sales_rmb)}</Table.Summary.Cell>
-                      <Table.Summary.Cell index={8} align="right">{fmtMoney(t.commission_usd)}</Table.Summary.Cell>
-                      <Table.Summary.Cell index={9} align="right">{fmtMoney(t.fba_fee_usd)}</Table.Summary.Cell>
-                      <Table.Summary.Cell index={10} align="right">{fmtMoney(t.ad_spend_usd)}</Table.Summary.Cell>
-                      <Table.Summary.Cell index={11} align="right">{fmtMoney(t.storage_fee_usd)}</Table.Summary.Cell>
-                      <Table.Summary.Cell index={12} align="right">{fmtMoney(t.product_cost_rmb)}</Table.Summary.Cell>
-                      <Table.Summary.Cell index={13} align="right">{fmtMoney(t.freight_cost_rmb)}</Table.Summary.Cell>
-                      <Table.Summary.Cell index={14} align="right" style={{ color: t.net_profit_rmb >= 0 ? '#3f8600' : '#cf1322' }}>{fmtMoney(t.net_profit_rmb)}</Table.Summary.Cell>
-                      <Table.Summary.Cell index={15} align="right">{fmtRate(t.net_profit_rmb / t.product_sales_rmb * 100)}</Table.Summary.Cell>
+                      <Table.Summary.Cell index={6}>-</Table.Summary.Cell>
+                      <Table.Summary.Cell index={7} align="right">{fmtMoney(t.product_sales_usd)}</Table.Summary.Cell>
+                      <Table.Summary.Cell index={8} align="right">{fmtMoney(t.product_sales_rmb)}</Table.Summary.Cell>
+                      <Table.Summary.Cell index={9} align="right">{fmtMoney(t.commission_usd)}</Table.Summary.Cell>
+                      <Table.Summary.Cell index={10} align="right">{fmtMoney(t.fba_fee_usd)}</Table.Summary.Cell>
+                      <Table.Summary.Cell index={11} align="right">{fmtMoney(t.ad_spend_usd)}</Table.Summary.Cell>
+                      <Table.Summary.Cell index={12} align="right">{fmtMoney(t.storage_fee_usd)}</Table.Summary.Cell>
+                      <Table.Summary.Cell index={13} align="right">{fmtMoney(t.product_cost_rmb)}</Table.Summary.Cell>
+                      <Table.Summary.Cell index={14} align="right">{fmtMoney(t.freight_cost_rmb)}</Table.Summary.Cell>
+                      <Table.Summary.Cell index={15} align="right" style={{ color: t.net_profit_rmb >= 0 ? '#3f8600' : '#cf1322' }}>{fmtMoney(t.net_profit_rmb)}</Table.Summary.Cell>
+                      <Table.Summary.Cell index={16} align="right">{fmtRate(t.net_profit_rmb / t.product_sales_rmb * 100)}</Table.Summary.Cell>
                     </>
                   )}
                 </Table.Summary.Row>

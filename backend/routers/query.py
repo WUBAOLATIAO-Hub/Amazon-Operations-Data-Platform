@@ -222,11 +222,19 @@ def get_monthly_summary(
                 func.coalesce(func.sum(MonthlySummary.product_cost_rmb), 0).label("ms_product_cost_rmb"),
                 func.coalesce(func.sum(MonthlySummary.freight_cost_rmb), 0).label("ms_freight_cost_rmb"),
                 func.coalesce(func.sum(MonthlySummary.net_profit_rmb), 0).label("ms_net_profit_rmb"),
+                func.coalesce(func.sum(MonthlySummary.order_qty), 0).label("order_qty"),
             )
             .join(MonthlySummary, and_(*ms_on))
             .filter(DimProduct.asin.notlike("Amazon.%"))
             .group_by(DimProduct.id, DimProduct.product_name, DimProduct.asin, DimProduct.sku, DimProduct.color)
-            .having(func.sum(MonthlySummary.order_count) > 0)
+            .having(
+                (func.sum(MonthlySummary.order_count) > 0) |
+                (func.sum(MonthlySummary.ad_spend_usd) != 0) |
+                (func.sum(MonthlySummary.storage_fee_usd) != 0) |
+                (func.sum(MonthlySummary.returns_fee_usd) != 0) |
+                (func.sum(MonthlySummary.inbound_fee_usd) != 0) |
+                (func.sum(MonthlySummary.removal_fee_usd) != 0)
+            )
         )
 
         if keyword:
@@ -247,6 +255,22 @@ def get_monthly_summary(
                 if pid not in cost_map:
                     cost_map[pid] = {"cost_rmb": float(pc.cost_rmb or 0), "freight_per_unit": float(pc.freight_per_unit or 0)}
 
+        # 批量查询退款数量
+        refund_map = {}
+        if product_ids and store_id and country_id and time_ids:
+            from models import RawTransaction
+            refund_q = db.query(
+                RawTransaction.sku,
+                func.sum(func.abs(RawTransaction.quantity)).label("refund_qty"),
+            ).filter(
+                RawTransaction.store_id == store_id,
+                RawTransaction.country_id == country_id,
+                RawTransaction.time_id.in_(time_ids),
+                RawTransaction.transaction_type == "Refund",
+            ).group_by(RawTransaction.sku)
+            for r in refund_q.all():
+                refund_map[r[0]] = int(r[1] or 0)
+
         results = []
         for row in all_rows:
             order_count = int(row.order_count or 0)
@@ -258,6 +282,7 @@ def get_monthly_summary(
             rate = round(net / sales_rmb * 100, 1) if sales_rmb > 0 else 0
 
             pc = cost_map.get(row.product_id, {})
+            refund_qty = refund_map.get(row.sku, 0)
             results.append({
                 "product_name": row.product_name or "-",
                 "asin": row.asin,
@@ -266,6 +291,7 @@ def get_monthly_summary(
                 "cost_rmb": pc.get("cost_rmb", 0),
                 "freight_per_unit": pc.get("freight_per_unit", 0),
                 "order_count": order_count,
+                "refund_qty": refund_qty,
                 "product_sales_usd": round(sales_usd, 2),
                 "product_sales_rmb": round(sales_rmb, 2),
                 "commission_usd": round(float(row.commission_usd or 0), 2),
