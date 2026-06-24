@@ -18,4 +18,3 @@ backend/uploads/*
 audit_*.txt
 audit_*.py
 backend/cleanup_*.py
-backup_before_*.sql

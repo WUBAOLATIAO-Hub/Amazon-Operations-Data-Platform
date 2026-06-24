@@ -156,7 +156,6 @@ class RawAdvertising(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     country_id = Column(Integer, ForeignKey("dim_country.id"), nullable=False)
     store_id = Column(Integer, ForeignKey("dim_store.id"), nullable=True)
-    time_id = Column(Integer, ForeignKey("dim_time.id"), nullable=True)  # v10: 按月清空依赖此字段
     product_field = Column(String(200))
     asin = Column(String(50))
     status_val = Column(String(50))
@@ -293,7 +292,6 @@ class RawLongTermStorage(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     country_id = Column(Integer, ForeignKey("dim_country.id"), nullable=False)
     store_id = Column(Integer, ForeignKey("dim_store.id"), nullable=True)
-    time_id = Column(Integer, ForeignKey("dim_time.id"), nullable=True)  # v10: 按月清空依赖此字段
     snapshot_date = Column(String(30))
     sku = Column(String(100))
     fnsku = Column(String(50))
