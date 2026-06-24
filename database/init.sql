@@ -1,3 +1,14 @@
+-- =========================================================
+-- ⚠️  DEPRECATED — DO NOT USE
+-- =========================================================
+-- 此脚本已废弃，与生产模型 (models.py) 严重脱节
+-- 缺少: store_id、adjustment_usd、time_id 等关键字段
+-- monthly_summary 唯一键缺 store_id 会导致多店铺导入冲突
+--
+-- 请使用 schema_v10_full.sql 代替
+-- 生成日期: 2026-06-24 (P0-2 修复)
+-- =========================================================
+
 DROP DATABASE IF EXISTS lmg_platform;
 CREATE DATABASE lmg_platform;
 USE lmg_platform;
