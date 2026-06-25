@@ -116,7 +116,7 @@ def _build_context(db: Session, store: str, country: str, year: int, month: int)
         if month:
             top_q = top_q.filter(DimTime.time_month == month)
     top_q = top_q.filter(MonthlySummary.order_count > 0)
-    top_q = top_q.group_by(DimProduct.sku)
+    top_q = top_q.group_by(DimProduct.sku, DimProduct.product_name)
 
     top3 = top_q.order_by(_func.sum(MonthlySummary.net_profit_rmb).desc()).limit(3).all()
     bottom3 = top_q.order_by(_func.sum(MonthlySummary.net_profit_rmb).asc()).limit(3).all()

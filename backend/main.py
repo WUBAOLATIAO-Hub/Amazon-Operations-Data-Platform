@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from database import get_db, engine, Base
-from routers import dashboard, advertising, import_data, query, export, auth
+from routers import dashboard, advertising, import_data, query, export, auth, ai
 
 app = FastAPI(title="LMG 数据平台", version="2.0")
 
@@ -38,6 +38,7 @@ app.include_router(import_data.router, prefix="/api/import", tags=["导入"])
 app.include_router(query.router, prefix="/api/query", tags=["查询"])
 app.include_router(export.router, prefix="/api/export", tags=["导出"])
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
+app.include_router(ai.router, prefix="/api/ai", tags=["AI"])
 
 
 @app.get("/api/stores")
