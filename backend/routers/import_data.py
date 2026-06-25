@@ -2317,8 +2317,11 @@ async def import_folder(
                 if _clear_time:
                     _clear_filters.append(RawTransaction.time_id == _clear_time.id)
                 db.query(RawTransaction).filter(*_clear_filters).delete()
-                # RawAdvertising 无日期字段，按店铺全量清空
-                db.query(RawAdvertising).filter(RawAdvertising.store_id == store_obj.id).delete()
+                # RawAdvertising：按店铺+月份清空
+                if _clear_time:
+                    db.query(RawAdvertising).filter(RawAdvertising.store_id == store_obj.id, RawAdvertising.time_id == _clear_time.id).delete()
+                else:
+                    db.query(RawAdvertising).filter(RawAdvertising.store_id == store_obj.id).delete()
                 # 仓储/退货/入库/长期仓储费：按店铺+月份清空
                 _fee_month_prefix = f"{import_year_val}-{import_month:02d}"
                 db.query(RawStorageFee).filter(RawStorageFee.store_id == store_obj.id, RawStorageFee.month_of_charge.like(f"{_fee_month_prefix}%")).delete()
