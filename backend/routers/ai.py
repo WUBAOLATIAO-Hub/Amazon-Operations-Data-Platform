@@ -98,10 +98,12 @@ def _build_context(db: Session, store: str, country: str, year: int, month: int)
     parts.append(f"- 佣金：¥{float(row.commission or 0):,.2f}")
     parts.append(f"- FBA费：¥{float(row.fba or 0):,.2f}")
 
-    # 利润 Top 3 和 Bottom 3
+    # 利润 Top 3 和 Bottom 3（按产品聚合，同SKU不重复占位）
+    from sqlalchemy import func as _func
     top_q = db.query(
         DimProduct.sku, DimProduct.product_name,
-        MonthlySummary.net_profit_rmb, MonthlySummary.product_sales_rmb,
+        _func.sum(MonthlySummary.net_profit_rmb).label("total_profit"),
+        _func.sum(MonthlySummary.product_sales_rmb).label("total_sales"),
     ).join(DimProduct, MonthlySummary.product_id == DimProduct.id)
     if store_id:
         top_q = top_q.filter(MonthlySummary.store_id == store_id)
@@ -114,18 +116,19 @@ def _build_context(db: Session, store: str, country: str, year: int, month: int)
         if month:
             top_q = top_q.filter(DimTime.time_month == month)
     top_q = top_q.filter(MonthlySummary.order_count > 0)
+    top_q = top_q.group_by(DimProduct.sku)
 
-    top3 = top_q.order_by(MonthlySummary.net_profit_rmb.desc()).limit(3).all()
-    bottom3 = top_q.order_by(MonthlySummary.net_profit_rmb.asc()).limit(3).all()
+    top3 = top_q.order_by(_func.sum(MonthlySummary.net_profit_rmb).desc()).limit(3).all()
+    bottom3 = top_q.order_by(_func.sum(MonthlySummary.net_profit_rmb).asc()).limit(3).all()
 
     if top3:
         parts.append(f"\n利润最高 TOP3：")
         for r in top3:
-            parts.append(f"  {r.sku}（{r.product_name}）：¥{float(r.net_profit_rmb):,.2f}")
+            parts.append(f"  {r.sku}（{r.product_name}）：¥{float(r.total_profit):,.2f}")
     if bottom3:
         parts.append(f"\n亏损最深 TOP3：")
         for r in bottom3:
-            parts.append(f"  {r.sku}（{r.product_name}）：¥{float(r.net_profit_rmb):,.2f}")
+            parts.append(f"  {r.sku}（{r.product_name}）：¥{float(r.total_profit):,.2f}")
 
     return "\n".join(parts)
 

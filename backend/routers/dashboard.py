@@ -503,7 +503,7 @@ def get_top_returns(
         if not refund_rows:
             return {"data": []}
 
-        # 2. 这些 SKU 的总订单数（用于算退货率）
+        # 2. 这些 SKU 的总订单数（用于算退货率，按店铺+国家过滤）
         sku_list = [r.sku for r in refund_rows]
         order_q = db.query(
             RawTransaction.sku,
@@ -513,7 +513,10 @@ def get_top_returns(
             RawTransaction.transaction_type == "Order",
             RawTransaction.sku.in_(sku_list)
         )
-        # 按导入月份筛选（用 time_id，不看数据内日期）
+        if country:
+            order_q = order_q.join(DimCountry, RawTransaction.country_id == DimCountry.id).filter(DimCountry.code == country.upper())
+        if store:
+            order_q = order_q.join(DimStore, RawTransaction.store_id == DimStore.id).filter(DimStore.code == store)
         if year or month:
             order_q = order_q.join(DimTime, RawTransaction.time_id == DimTime.id)
             if year:
@@ -549,7 +552,7 @@ def get_top_returns(
                 "refund_count": refund_count,
                 "refund_qty": refund_qty,
                 "order_count": order_count,
-                "return_rate": round(refund_count / order_count * 100, 1) if order_count > 0 else 0,
+                "return_rate": round(refund_qty / order_qty * 100, 1) if order_qty > 0 else 0,
                 "qty_per_order": round(refund_qty / refund_count, 2) if refund_count > 0 else 0,
             })
 
