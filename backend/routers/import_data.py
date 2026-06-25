@@ -908,7 +908,7 @@ async def import_transaction(
             product = _find_product_by_sku(db, sku, store_id=store_obj.id if store_obj else None, year_month=f"{year}-{month:02d}")
             if not product:
                 asin = sku.split("-")[0] if sku and "-" in sku else sku
-                product = _get_or_create_product(db, asin, sku)
+                product = _get_or_create_product(db, asin, sku, store_id=store_obj.id)
             if not product:
                 continue
             time_obj = _get_or_create_time(db, year, month)
@@ -973,7 +973,7 @@ async def import_transaction(
             product = _find_product_by_sku(db, sku, store_id=store_obj.id if store_obj else None, year_month=f"{adj_year}-{adj_month:02d}")
             if not product:
                 asin = sku.split("-")[0] if sku and "-" in sku else sku
-                product = _get_or_create_product(db, asin, sku)
+                product = _get_or_create_product(db, asin, sku, store_id=store_obj.id)
             if not product:
                 continue
             time_obj = _get_or_create_time(db, adj_year, adj_month)
@@ -2837,7 +2837,7 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
         product = _find_product_by_sku(db, sku, store_id=store_id, year_month=f"{year}-{month:02d}")
         if not product:
             asin = sku.split("-")[0] if sku and "-" in sku else sku
-            product = _get_or_create_product(db, asin, sku)
+            product = _get_or_create_product(db, asin, sku, store_id=store_id)
         if not product:
             continue
         time_obj = _get_or_create_time(db, year, month)
@@ -2903,7 +2903,7 @@ def _process_transaction_sheet(db, country_obj, header, rows, store_id=None, imp
         product = _find_product_by_sku(db, adj_sku, store_id=store_id, year_month=f"{adj_year}-{adj_month:02d}")
         if not product:
             asin = adj_sku.split("-")[0] if adj_sku and "-" in adj_sku else adj_sku
-            product = _get_or_create_product(db, asin, adj_sku)
+            product = _get_or_create_product(db, asin, adj_sku, store_id=store_id)
         if not product:
             continue
         time_obj = _get_or_create_time(db, adj_year, adj_month)
