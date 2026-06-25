@@ -477,21 +477,21 @@ async def import_transaction(
         if not store_obj:
             return {"detail": f"店铺 {store} 不存在"}
 
+        if not import_year or not import_month:
+            raise HTTPException(status_code=400, detail="必须同时提供 year 和 month 参数")
+
         from sqlalchemy import extract as _extract
 
-        # 清除该店铺的旧交易数据（用 time_id 匹配，不用日期字段，避免跨月误删）
+        _clear_time = db.query(DimTime).filter(DimTime.time_year == import_year, DimTime.time_month == import_month).first()
         _clear_filters = [RawTransaction.store_id == store_obj.id]
-        if import_year and import_month:
-            _clear_time = db.query(DimTime).filter(DimTime.time_year == import_year, DimTime.time_month == import_month).first()
-            if _clear_time:
-                _clear_filters.append(RawTransaction.time_id == _clear_time.id)
+        if _clear_time:
+            _clear_filters.append(RawTransaction.time_id == _clear_time.id)
         db.query(RawTransaction).filter(*_clear_filters).delete()
 
+        _time_obj = db.query(DimTime).filter(DimTime.time_year == import_year, DimTime.time_month == import_month).first()
         _clear_ms = [MonthlySummary.store_id == store_obj.id]
-        if import_year and import_month:
-            _time_obj = db.query(DimTime).filter(DimTime.time_year == import_year, DimTime.time_month == import_month).first()
-            if _time_obj:
-                _clear_ms.append(MonthlySummary.time_id == _time_obj.id)
+        if _time_obj:
+            _clear_ms.append(MonthlySummary.time_id == _time_obj.id)
         db.query(MonthlySummary).filter(*_clear_ms).delete()
         db.flush()
 
@@ -1205,8 +1205,16 @@ async def import_advertising(
         if not store_obj:
             return {"detail": f"店铺 {store} 不存在"}
 
-        # 清除该店铺旧广告数据，防止重复导入
-        db.query(RawAdvertising).filter(RawAdvertising.store_id == store_obj.id).delete()
+        if not import_year or not import_month:
+            raise HTTPException(status_code=400, detail="必须同时提供 year 和 month 参数")
+
+        # 清除该店铺当月旧广告数据（用 time_id 避免跨月误删）
+        _adv_time = db.query(DimTime).filter(DimTime.time_year == import_year, DimTime.time_month == import_month).first()
+        _adv_tid = _adv_time.id if _adv_time else None
+        if _adv_tid:
+            db.query(RawAdvertising).filter(RawAdvertising.store_id == store_obj.id, RawAdvertising.time_id == _adv_tid).delete()
+        else:
+            db.query(RawAdvertising).filter(RawAdvertising.store_id == store_obj.id).delete()
         db.flush()
 
         content = await file.read()
@@ -1309,6 +1317,7 @@ async def import_advertising(
                 new_to_brand_sales_pct=new_to_brand_pct,
                 visible_impressions=visible_imp,
                 raw_data=dict(row),
+                time_id=_adv_tid,
             )
             db.add(raw_adv)
 
@@ -1921,41 +1930,34 @@ async def import_workbook(
         if not store_obj:
             return {"detail": f"店铺 {store} 不存在，请先在系统管理创建"}
 
-        # 清空该店铺+导入月份的数据（用 time_id 匹配，避免跨月误删）
+        if not import_year or not import_month:
+            raise HTTPException(status_code=400, detail="必须同时提供 year 和 month 参数")
+
         from sqlalchemy import extract, text as _text, func as _func
+        _clear_time = db.query(DimTime).filter(DimTime.time_year == import_year, DimTime.time_month == import_month).first()
         _clear_filters = [RawTransaction.store_id == store_obj.id]
-        if import_year and import_month:
-            _clear_time = db.query(DimTime).filter(DimTime.time_year == import_year, DimTime.time_month == import_month).first()
-            if _clear_time:
-                _clear_filters.append(RawTransaction.time_id == _clear_time.id)
+        if _clear_time:
+            _clear_filters.append(RawTransaction.time_id == _clear_time.id)
         db.query(RawTransaction).filter(*_clear_filters).delete()
 
-        # RawAdvertising 无日期字段，按店铺全量清空
-        db.query(RawAdvertising).filter(RawAdvertising.store_id == store_obj.id).delete()
-
-        # 仓储费/退货/入库/长期仓储费：按店铺+月份清空（不跨月）
-        if import_year and import_month:
-            _fee_month_prefix = f"{import_year}-{import_month:02d}"
-            db.query(RawStorageFee).filter(RawStorageFee.store_id == store_obj.id, RawStorageFee.month_of_charge.like(f"{_fee_month_prefix}%")).delete()
-            db.query(RawReturns).filter(RawReturns.store_id == store_obj.id, RawReturns.month_of_charge.like(f"{_fee_month_prefix}%")).delete()
-            db.query(RawInbound).filter(RawInbound.store_id == store_obj.id, _func.date_format(RawInbound.transaction_date, '%Y-%m') == _fee_month_prefix).delete()
-            # 长期仓储费没有明确的月份字段，按店铺全量清空
-            db.query(RawLongTermStorage).filter(RawLongTermStorage.store_id == store_obj.id).delete()
+        # RawAdvertising：按店铺+月份清空
+        if _clear_time:
+            db.query(RawAdvertising).filter(RawAdvertising.store_id == store_obj.id, RawAdvertising.time_id == _clear_time.id).delete()
         else:
-            db.query(RawStorageFee).filter(RawStorageFee.store_id == store_obj.id).delete()
-            db.query(RawReturns).filter(RawReturns.store_id == store_obj.id).delete()
-            db.query(RawInbound).filter(RawInbound.store_id == store_obj.id).delete()
-            db.query(RawLongTermStorage).filter(RawLongTermStorage.store_id == store_obj.id).delete()
+            db.query(RawAdvertising).filter(RawAdvertising.store_id == store_obj.id).delete()
 
-        # MonthlySummary：按店铺+月份清空
-        if import_year and import_month:
-            _time_obj = db.query(DimTime).filter(DimTime.time_year == import_year, DimTime.time_month == import_month).first()
-            if _time_obj:
-                db.query(MonthlySummary).filter(MonthlySummary.store_id == store_obj.id, MonthlySummary.time_id == _time_obj.id).delete()
-                db.query(DimExchangeRate).filter(DimExchangeRate.store_id == store_obj.id, DimExchangeRate.year_month == f"{import_year}-{import_month:02d}").delete()
-        else:
-            db.query(MonthlySummary).filter(MonthlySummary.store_id == store_obj.id).delete()
-            db.query(DimExchangeRate).filter(DimExchangeRate.store_id == store_obj.id).delete()
+        # 仓储费/退货/入库：按店铺+月份清空
+        _fee_month_prefix = f"{import_year}-{import_month:02d}"
+        db.query(RawStorageFee).filter(RawStorageFee.store_id == store_obj.id, RawStorageFee.month_of_charge.like(f"{_fee_month_prefix}%")).delete()
+        db.query(RawReturns).filter(RawReturns.store_id == store_obj.id, RawReturns.month_of_charge.like(f"{_fee_month_prefix}%")).delete()
+        db.query(RawInbound).filter(RawInbound.store_id == store_obj.id, _func.date_format(RawInbound.transaction_date, '%Y-%m') == _fee_month_prefix).delete()
+        db.query(RawLongTermStorage).filter(RawLongTermStorage.store_id == store_obj.id).delete()
+
+        # MonthlySummary + 汇率：按店铺+月份清空
+        _time_obj = db.query(DimTime).filter(DimTime.time_year == import_year, DimTime.time_month == import_month).first()
+        if _time_obj:
+            db.query(MonthlySummary).filter(MonthlySummary.store_id == store_obj.id, MonthlySummary.time_id == _time_obj.id).delete()
+            db.query(DimExchangeRate).filter(DimExchangeRate.store_id == store_obj.id, DimExchangeRate.year_month == f"{import_year}-{import_month:02d}").delete()
         db.flush()
 
         content = await file.read()
@@ -3107,6 +3109,7 @@ def _process_advertising_sheet(db, country_obj, header, rows, time_id=None, stor
             new_to_brand_sales_pct=_safe_decimal(row[col_new_brand]) if col_new_brand is not None else Decimal("0"),
             visible_impressions=_safe_int(row[col_vis_imp]) if col_vis_imp is not None else 0,
             raw_data=_json_safe(header, row),
+            time_id=time_id,
         )
         db.add(raw_adv)
 

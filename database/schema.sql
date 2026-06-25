@@ -1,3 +1,10 @@
+-- ===================================================================
+-- ⚠️ 此文件已严重过时（缺少 store_id 列、缺 dim_store 等表、字段不全）
+--   请勿用于新建数据库！
+--   新建库请使用: python -c "from models import Base; Base.metadata.create_all(engine)"
+--   或按序执行: migration_v*.sql
+--   本文件仅供参考历史表结构。
+-- ===================================================================
 -- LMG 数据平台数据库
 CREATE DATABASE IF NOT EXISTS lmg_platform DEFAULT CHARSET utf8mb4;
 USE lmg_platform;

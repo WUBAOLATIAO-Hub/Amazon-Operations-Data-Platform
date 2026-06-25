@@ -177,6 +177,7 @@ class RawAdvertising(Base):
     new_to_brand_sales_pct = Column(Numeric(10, 4), default=0)
     visible_impressions = Column(Integer, default=0)
     raw_data = Column(JSON)
+    time_id = Column(Integer, nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.now())
 
 
