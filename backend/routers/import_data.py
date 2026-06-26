@@ -3883,9 +3883,10 @@ def _recalculate_all_profit(db, country_obj, store_id=None, time_id=None):
         summary.marketplace_withheld_tax_usd = Decimal("0")
         summary.adjustment_usd = Decimal("0")
 
-        # order_qty 从 raw 取纯Order件数（不减Refund），避免成本和运费偏低
+        # order_qty 用纯Order件数（Order里已包含后来退货的）
         if ra and "order_qty_raw" in ra:
-            summary.order_qty = ra["order_qty_raw"]
+            order_qty = ra["order_qty_raw"]
+            summary.order_qty = order_qty
         else:
             order_qty = summary.order_qty or 0
             summary.order_qty = order_qty
