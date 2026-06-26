@@ -11,10 +11,10 @@ from models import MonthlySummary, DimCountry, DimStore, DimTime, DimProduct
 
 router = APIRouter()
 
-AI_API_KEY = os.getenv("AI_API_KEY", "sk-776661ea24c9471eb28a8ba8088b2160")
+AI_API_KEY = os.getenv("AI_API_KEY")
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://api.deepseek.com/anthropic")
 AI_MODEL = os.getenv("AI_MODEL", "deepseek-chat")
-AI_PROVIDER = os.getenv("AI_PROVIDER", "anthropic")  # openai 或 anthropic
+AI_PROVIDER = os.getenv("AI_PROVIDER", "anthropic")
 
 SYSTEM_PROMPT = """你是 LMG 跨境电商数据平台的 AI 分析助手。
 
