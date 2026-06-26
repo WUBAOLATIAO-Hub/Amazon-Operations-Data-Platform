@@ -3775,8 +3775,8 @@ def _recalculate_all_profit(db, country_obj, store_id=None, time_id=None):
                SUM(CASE WHEN rt.transaction_type IN ('Order', 'Refund') THEN rt.selling_fee ELSE 0 END) as selling_fee,
                SUM(CASE WHEN rt.transaction_type IN ('Order', 'Refund') THEN rt.fba_fee ELSE 0 END) as fba_fee,
                SUM(CASE WHEN rt.transaction_type = 'Adjustment' THEN rt.total ELSE 0 END) as adj_total,
-               COUNT(CASE WHEN rt.transaction_type = 'Order' THEN 1 END) as order_cnt,
-               SUM(CASE WHEN rt.transaction_type = 'Order' THEN ABS(rt.quantity) ELSE 0 END) as order_qty_raw
+               COUNT(CASE WHEN rt.transaction_type = 'Order' AND rt.sku NOT LIKE 'amzn.gr.%' THEN 1 END) as order_cnt,
+               SUM(CASE WHEN rt.transaction_type = 'Order' AND rt.sku NOT LIKE 'amzn.gr.%' THEN ABS(rt.quantity) ELSE 0 END) as order_qty_raw
         FROM raw_transactions rt
         WHERE rt.country_id = :cid{_raw_extra}
         GROUP BY rt.sku, rt.time_id, rt.store_id
