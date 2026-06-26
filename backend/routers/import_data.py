@@ -167,7 +167,7 @@ def _get_or_create_product(db: Session, asin: str, sku: str = None, store_id: in
     import re as _re
     if not _re.match(r'^B0[A-Z0-9]{8}$', asin):
         # ASIN不合法，尝试通过SKU在已有产品中查找真实ASIN
-        if sku and store_id and year_month:
+        if sku and store_id:
             existing = db.query(DimProduct).filter(
                 DimProduct.sku == sku, DimProduct.store_id == store_id,
                 DimProduct.asin.op('REGEXP')(r'^B0[A-Z0-9]{8}$')
@@ -1129,7 +1129,7 @@ async def import_product_info(
             if not product:
                 product = DimProduct(
                     asin=asin, sku=sku or asin, product_name=product_name or "",
-                    color=color, store_id=store_obj.id if store_obj else None, year_month=ym,
+                    color=color, store_id=store_obj.id if store_obj else None,
                 )
                 db.add(product)
                 db.flush()
