@@ -3775,7 +3775,8 @@ def _recalculate_all_profit(db, country_obj, store_id=None, time_id=None):
                SUM(CASE WHEN rt.transaction_type IN ('Order', 'Refund') THEN rt.selling_fee ELSE 0 END) as selling_fee,
                SUM(CASE WHEN rt.transaction_type IN ('Order', 'Refund') THEN rt.fba_fee ELSE 0 END) as fba_fee,
                SUM(CASE WHEN rt.transaction_type = 'Adjustment' THEN rt.total ELSE 0 END) as adj_total,
-               COUNT(CASE WHEN rt.transaction_type = 'Order' THEN 1 END) as order_cnt
+               COUNT(CASE WHEN rt.transaction_type = 'Order' THEN 1 END) as order_cnt,
+               SUM(CASE WHEN rt.transaction_type = 'Order' THEN ABS(rt.quantity) ELSE 0 END) as order_qty_raw
         FROM raw_transactions rt
         WHERE rt.country_id = :cid{_raw_extra}
         GROUP BY rt.sku, rt.time_id, rt.store_id
@@ -3800,6 +3801,7 @@ def _recalculate_all_profit(db, country_obj, store_id=None, time_id=None):
                 "selling_fee": Decimal("0"), "fba_fee": Decimal("0"),
                 "adj_no_order": Decimal("0"),
                 "order_cnt": 0,
+                "order_qty_raw": 0,
             }
         agg = raw_agg[key]
         agg["product_sales"] += Decimal(str(row[3] or 0))
@@ -3815,6 +3817,7 @@ def _recalculate_all_profit(db, country_obj, store_id=None, time_id=None):
         agg["fba_fee"] += Decimal(str(row[13] or 0))
         agg["adj_no_order"] += Decimal(str(row[14] or 0))
         agg["order_cnt"] += int(row[15] or 0)
+        agg["order_qty_raw"] += int(row[16] or 0)
 
     # 产品表: id -> (asin, sku)
     product_map = {}
@@ -3880,8 +3883,12 @@ def _recalculate_all_profit(db, country_obj, store_id=None, time_id=None):
         summary.marketplace_withheld_tax_usd = Decimal("0")
         summary.adjustment_usd = Decimal("0")
 
-        order_qty = summary.order_qty or summary.order_count or 0
-        summary.order_qty = order_qty
+        # order_qty 从 raw 取纯Order件数（不减Refund），避免成本和运费偏低
+        if ra and "order_qty_raw" in ra:
+            summary.order_qty = ra["order_qty_raw"]
+        else:
+            order_qty = summary.order_qty or 0
+            summary.order_qty = order_qty
 
         # 没有净订单时成本归零
         if (summary.order_count or 0) <= 0:
