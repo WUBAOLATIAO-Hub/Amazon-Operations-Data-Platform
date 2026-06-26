@@ -169,8 +169,20 @@ def get_monthly_summary(
         total_row = total_q.one()
         total_sales_rmb = float(total_row.product_sales_rmb or 0)
         total_net = float(total_row.net_profit_rmb or 0)
+
+        # 净销量 = order_qty - refund_qty
+        _rt_qty = db.query(
+            func.sum(MonthlySummary.order_qty).label("oq"),
+        ).filter(*filters).first() if filters else None
+        total_oq = int(_rt_qty.oq or 0) if _rt_qty else 0
+        total_rf = sum(refund_map.values())
+        total_net_qty = max(total_oq - total_rf, 0)
+
         totals = {
             "order_count": int(total_row.order_count or 0),
+            "order_qty": total_oq,
+            "refund_qty": total_rf,
+            "net_qty": total_net_qty,
             "product_sales_usd": round(float(total_row.product_sales_usd or 0), 2),
             "product_sales_rmb": round(total_sales_rmb, 2),
             "commission_usd": round(float(total_row.commission_usd or 0), 2),

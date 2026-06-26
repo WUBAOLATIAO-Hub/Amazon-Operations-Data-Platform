@@ -214,7 +214,7 @@ export default function DataQuery() {
   // 国家汇总表列
   const countryColumns = [
     { title: '国家', dataIndex: 'country_name', width: 100, render: (v, r) => <Tag>{r.country_code}</Tag> },
-    { title: '销量', dataIndex: 'order_count', width: 70, align: 'right', render: v => <strong>{v}</strong> },
+    { title: '净销量', dataIndex: 'order_count', width: 70, align: 'right', render: (_, r) => <strong>{(r.order_count || 0) - (r.refund_qty || 0)}</strong> },
     { title: '销售额($)', dataIndex: 'product_sales_usd', width: 110, align: 'right', render: v => fmtMoney(v) },
     { title: '销售额(¥)', dataIndex: 'product_sales_rmb', width: 110, align: 'right', render: v => fmtMoney(v) },
     { title: '佣金($)', dataIndex: 'commission_usd', width: 100, align: 'right', render: v => <span style={{ color: v < 0 ? '#cf1322' : undefined }}>{fmtMoney(v)}</span> },
@@ -233,7 +233,7 @@ export default function DataQuery() {
     { title: '产品名称', dataIndex: 'product_name', key: 'product_name', width: 180, fixed: 'left', ellipsis: true, sorter: true },
     { title: 'ASIN', dataIndex: 'asin', key: 'asin', width: 130, ellipsis: true },
     { title: '颜色', dataIndex: 'color', key: 'color', width: 70, render: v => v || '-' },
-    { title: '销量', dataIndex: 'order_count', key: 'order_count', width: 60, align: 'right', sorter: true, render: v => <strong>{v}</strong> },
+    { title: '净销量', dataIndex: 'order_count', key: 'order_count', width: 70, align: 'right', sorter: true, render: (_, r) => <strong>{(r.order_count || 0) - (r.refund_qty || 0)}</strong> },
     { title: '退款', dataIndex: 'refund_qty', key: 'refund_qty', width: 50, align: 'right', render: v => v > 0 ? <span style={{ color: '#cf1322' }}>{v}</span> : '-' },
     { title: '单价(¥)', dataIndex: 'cost_rmb', key: 'cost_rmb', width: 80, align: 'right', render: v => fmtMoney(v) },
     { title: '运费/台(¥)', dataIndex: 'freight_per_unit', key: 'freight_per_unit', width: 100, align: 'right', render: v => fmtMoney(v) },
@@ -284,7 +284,7 @@ export default function DataQuery() {
 
       {/* 店铺汇总卡片 */}
       <Row gutter={10} style={{ marginBottom: 12 }}>
-        <Col span={4}><Card size="small"><Statistic title="总销量" value={totals.order_count || 0} suffix="台" /></Card></Col>
+        <Col span={4}><Card size="small"><Statistic title="总净销量" value={totals.net_qty || 0} suffix="台" /></Card></Col>
         <Col span={4}><Card size="small"><Statistic title="销售额($)" value={totals.product_sales_usd || 0} prefix="$" precision={2} /></Card></Col>
         <Col span={4}><Card size="small"><Statistic title="销售额(¥)" value={totals.product_sales_rmb || 0} prefix="¥" precision={2} /></Card></Col>
         <Col span={3}><Card size="small"><Statistic title="佣金($)" value={totals.commission_usd || 0} prefix="$" precision={2} /></Card></Col>
