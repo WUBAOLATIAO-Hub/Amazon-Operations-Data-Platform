@@ -3883,6 +3883,12 @@ def _recalculate_all_profit(db, country_obj, store_id=None, time_id=None):
         summary.marketplace_withheld_tax_usd = Decimal("0")
         summary.adjustment_usd = Decimal("0")
 
+        # 提前获取 ra（order_qty_raw 和后续用）
+        product = product_map.get(summary.product_id)
+        sku = product.sku if product else None
+        raw_key = (sku, summary.time_id, summary.store_id) if sku else None
+        ra = raw_agg.get(raw_key, {}) if raw_key else {}
+
         # order_qty 用纯Order件数（Order里已包含后来退货的）
         if ra and "order_qty_raw" in ra:
             order_qty = ra["order_qty_raw"]
@@ -3922,12 +3928,6 @@ def _recalculate_all_profit(db, country_obj, store_id=None, time_id=None):
         summary.product_cost_rmb = (cost_per_unit * order_qty).quantize(Decimal("0.01"))
         summary.freight_cost_rmb = (freight_per_unit * order_qty).quantize(Decimal("0.01"))
         summary.exchange_rate = er
-
-        # 从 raw_agg 取所有字段（用 sku, time_id, store_id 匹配）
-        product = product_map.get(summary.product_id)
-        sku = product.sku if product else None
-        raw_key = (sku, summary.time_id, summary.store_id) if sku else None
-        ra = raw_agg.get(raw_key, {}) if raw_key else {}
 
         # 从 raw 数据更新 order_count
         if ra:
