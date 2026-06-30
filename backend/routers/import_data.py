@@ -3297,7 +3297,7 @@ def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None, i
                 fulfillment_center=_safe_str(row[col_fc], 100) if col_fc is not None and row[col_fc] else "",
                 country_code=_safe_str(row[col_cc], 20) if col_cc is not None and row[col_cc] else "",
                 product_size_tier=_safe_str(row[col_tier], 50) if col_tier is not None and row[col_tier] else "",
-                month_of_charge=_safe_str(row[col_moc], 30) if col_moc is not None and row[col_moc] else "",
+                month_of_charge=_import_ym if _import_ym else _safe_str(row[col_moc], 30) if col_moc is not None and row[col_moc] else "",
                 currency=_safe_str(row[col_currency], 50) if col_currency is not None and row[col_currency] else "",
                 estimated_monthly_storage_fee=fee,
                 raw_data=_json_safe(header, row),
@@ -3332,7 +3332,7 @@ def _process_fee_sheet(db, country_obj, header, rows, fee_type, store_id=None, i
                 asin_returned_units=_safe_int(row[col_ret_units]) if col_ret_units is not None else 0,
                 sku_fee_per_unit=_safe_decimal(row[col_fee_per]) if col_fee_per is not None else Decimal("0"),
                 sku_returns_fee=fee,
-                month_of_charge=_safe_str(row[col_moc], 30) if col_moc is not None and row[col_moc] else "",
+                month_of_charge=_import_ym if _import_ym else _safe_str(row[col_moc], 30) if col_moc is not None and row[col_moc] else "",
                 currency=_safe_str(row[col_currency], 50) if col_currency is not None and row[col_currency] else "",
                 raw_data=_json_safe(header, row),
             )
