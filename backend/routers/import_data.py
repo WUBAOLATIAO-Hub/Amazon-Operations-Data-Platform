@@ -185,7 +185,7 @@ def _get_or_create_product(db: Session, asin: str, sku: str = None, store_id: in
         ).first()
 
     if not product:
-        product = DimProduct(asin=asin, sku=sku or asin, store_id=store_id, year_month=year_month)
+        product = DimProduct(asin=asin, sku=sku or asin, store_id=store_id)
         db.add(product)
         db.flush()
     elif sku:
@@ -3005,21 +3005,18 @@ def _process_product_info_sheet(db, header, rows, import_year=None, import_month
         else:
             freight = _safe_decimal(row[col_freight]) if col_freight is not None else Decimal("0")
 
-        # 按店铺+月份严格查找（不回退全局）
-        ym_key = f"{import_year}-{import_month:02d}" if import_year and import_month else None
+        # 按店铺查找（同ASIN同店铺不跨月分拆）
         product = None
-        if store_id and ym_key:
+        if store_id:
             product = db.query(DimProduct).filter(
                 DimProduct.asin == asin,
                 DimProduct.store_id == store_id,
-                DimProduct.year_month == ym_key,
             ).first()
 
         if not product:
-            # 不存在则新建（每个店铺每个月份独立产品）
             product = DimProduct(
                 asin=asin, sku=sku or asin, product_name=name or "",
-                color=color, store_id=store_id, year_month=ym_key,
+                color=color, store_id=store_id,
             )
             db.add(product)
             db.flush()
@@ -3683,11 +3680,10 @@ def _process_removal_fee_sheet(db, country_obj, header, rows, store_id=None, imp
     # 按 SKU 匹配产品，更新 monthly_summary 的 removal_fee_usd
     summary_updated = 0
     for (cid, sku, ym), total_fee in sku_fees.items():
-        # SKU 匹配产品（严格按店铺+月份隔离，绝不跨店）
+        # SKU 匹配产品（按店铺匹配，不跨月分拆）
         product = db.query(DimProduct).filter(
             DimProduct.sku == sku,
             DimProduct.store_id == store_id,
-            DimProduct.year_month == _import_ym,
         ).first()
         if not product:
             continue
