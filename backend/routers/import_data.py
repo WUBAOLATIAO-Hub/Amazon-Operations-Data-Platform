@@ -178,17 +178,25 @@ def _get_or_create_product(db: Session, asin: str, sku: str = None, store_id: in
 
     product = None
     if store_id:
-        # 按 ASIN+店铺查找（同ASIN同店铺不跨月分拆）
-        product = db.query(DimProduct).filter(
-            DimProduct.asin == asin,
-            DimProduct.store_id == store_id,
-        ).first()
+        # 优先按 SKU+店铺精确匹配
+        if sku and sku != asin:
+            product = db.query(DimProduct).filter(
+                DimProduct.sku == sku,
+                DimProduct.store_id == store_id,
+            ).first()
+        # 其次按 ASIN+店铺（取最新，同ASIN多SKU时返回最近的）
+        if not product:
+            product = db.query(DimProduct).filter(
+                DimProduct.asin == asin,
+                DimProduct.store_id == store_id,
+            ).order_by(DimProduct.id.desc()).first()
 
     if not product:
         product = DimProduct(asin=asin, sku=sku or asin, store_id=store_id)
         db.add(product)
         db.flush()
     elif sku:
+        # 已有产品但SKU变了 → 不覆盖, 由import_product_info新建
         product.sku = sku
         db.flush()
     return product
@@ -271,7 +279,7 @@ def _find_product_by_asin(db: Session, asin: str, store_id: int = None, year_mon
         return db.query(DimProduct).filter(
             DimProduct.asin == asin,
             DimProduct.store_id == store_id,
-        ).first()
+        ).order_by(DimProduct.id.desc()).first()
     return None
 
 
@@ -1118,13 +1126,20 @@ async def import_product_info(
             exchange_rate = _safe_decimal(row[col_map["汇率"]]) if "汇率" in col_map else None
             time_val = str(row[col_map["时间"]]).strip() if "时间" in col_map and row[col_map["时间"]] else None
 
-            # 按店铺查找（同ASIN同店铺不跨月分拆）
+            # 按 ASIN+SKU+店铺精确查找（同ASIN不同SKU各自独立）
             product = None
             if store_obj:
-                product = db.query(DimProduct).filter(
-                    DimProduct.asin == asin,
-                    DimProduct.store_id == store_obj.id,
-                ).first()
+                if sku and sku != asin:
+                    product = db.query(DimProduct).filter(
+                        DimProduct.asin == asin,
+                        DimProduct.sku == sku,
+                        DimProduct.store_id == store_obj.id,
+                    ).first()
+                if not product:
+                    product = db.query(DimProduct).filter(
+                        DimProduct.asin == asin,
+                        DimProduct.store_id == store_obj.id,
+                    ).order_by(DimProduct.id.desc()).first()
 
             if not product:
                 product = DimProduct(
@@ -3005,13 +3020,20 @@ def _process_product_info_sheet(db, header, rows, import_year=None, import_month
         else:
             freight = _safe_decimal(row[col_freight]) if col_freight is not None else Decimal("0")
 
-        # 按店铺查找（同ASIN同店铺不跨月分拆）
+        # 按 ASIN+SKU+店铺精确查找
         product = None
         if store_id:
-            product = db.query(DimProduct).filter(
-                DimProduct.asin == asin,
-                DimProduct.store_id == store_id,
-            ).first()
+            if sku and sku != asin:
+                product = db.query(DimProduct).filter(
+                    DimProduct.asin == asin,
+                    DimProduct.sku == sku,
+                    DimProduct.store_id == store_id,
+                ).first()
+            if not product:
+                product = db.query(DimProduct).filter(
+                    DimProduct.asin == asin,
+                    DimProduct.store_id == store_id,
+                ).order_by(DimProduct.id.desc()).first()
 
         if not product:
             product = DimProduct(
