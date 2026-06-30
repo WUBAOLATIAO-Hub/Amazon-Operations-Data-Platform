@@ -1239,6 +1239,14 @@ async def import_advertising(
                     return row[name]
             return None
 
+        def get_col_like(row, *keywords):
+            for key in row:
+                kl = key.lower()
+                for kw in keywords:
+                    if kw.lower() in kl:
+                        return row[key]
+            return None
+
         # 按 (ASIN, 年月) 聚合 + 写 raw_advertising
         ad_aggregation = {}  # key: (asin, year, month) -> aggregated values
         row_count = 0
@@ -1276,7 +1284,7 @@ async def import_advertising(
                             ad_month = month_map[month_str]
                             ad_year = int(year_str) if len(year_str) == 4 else int("20" + year_str) if len(year_str) == 2 else None
 
-            ad_spend = _safe_decimal(get_col(row, "花费(USD)", "花费(CAD)", "花费(MX)", "花费(EUR)", "花费(GBP)", "花费(SEK)", "花费(AUD)", "花费", "支出(USD)", "支出(CAD)", "支出(MX)", "支出(EUR)", "支出(GBP)", "支出(SEK)", "支出(AUD)"))
+            ad_spend = _safe_decimal(get_col_like(row, "花费", "支出", "spend", "cost"))
             ad_sales = _safe_decimal(get_col(row, "销售额(USD)", "销售额(CAD)", "销售额(MX)", "销售额"))
             acos_val = _safe_decimal(get_col(row, "ACOS", "acos"))
             roas_val = _safe_decimal(get_col(row, "ROAS", "roas"))
@@ -2494,6 +2502,16 @@ def _find_col(header, *names):
     return None
 
 
+def _find_col_like(header, *keywords):
+    """模糊匹配：表头包含任一关键词即返回索引"""
+    for i, h in enumerate(header):
+        hl = h.lower() if h else ""
+        for kw in keywords:
+            if kw.lower() in hl:
+                return i
+    return None
+
+
 def _parse_eu_number(value):
     """解析欧洲格式数字：30,24→30.24 / 1 135,72→1135.72 / 1,777.43→1777.43 / 30.24→30.24"""
     if value is None:
@@ -3048,8 +3066,8 @@ def _process_product_info_sheet(db, header, rows, import_year=None, import_month
 def _process_advertising_sheet(db, country_obj, header, rows, time_id=None, store_id=None, import_year=None, import_month=None):
     """处理广告 sheet，使用导入时选择的年月"""
     col_product = _find_col(header, "商品", "asin", "product", "campaign")
-    col_spend = _find_col(header, "花费(usd)", "花费(cad)", "花费(mx)", "花费(eur)", "花费(gbp)", "花费(sek)", "花费(aud)", "花费", "支出(usd)", "支出(cad)", "支出(mx)", "支出(eur)", "支出(gbp)", "支出(sek)", "支出(aud)", "spend", "cost")
-    col_sales = _find_col(header, "销售额(usd)", "销售额(cad)", "销售额(mx)", "销售额", "sales")
+    col_spend = _find_col_like(header, "花费", "支出", "spend", "cost")
+    col_sales = _find_col_like(header, "销售额", "sales")
     col_time = _find_col(header, "time", "日期", "date")
     col_acos = _find_col(header, "acos")
     col_roas = _find_col(header, "roas")
